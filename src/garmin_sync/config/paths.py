@@ -43,6 +43,15 @@ def default_config_path() -> Path:
     return default_config_dir() / "config.toml"
 
 
+def default_profile_path() -> Path:
+    """Return the platform-native path to ``profile.toml``.
+
+    The profile file stores training schedule, goals, and timezone —
+    non-secret data that is safe to share or version-control.
+    """
+    return default_config_dir() / "profile.toml"
+
+
 def default_garth_token_dir() -> Path:
     """Return the default directory for garth OAuth tokens.
 

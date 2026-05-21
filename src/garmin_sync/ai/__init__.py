@@ -1,7 +1,7 @@
 """AI-powered fitness analysis module."""
 
 from garmin_sync.ai.chat import ChatSession
-from garmin_sync.ai.config import AIConfig, load_config, save_config
+from garmin_sync.ai.config import AIConfig, load_config, migrate_config_if_needed, save_config
 from garmin_sync.ai.openai_client import (
     COACH_SYSTEM_MESSAGE,
     OpenAIAnalysisError,
@@ -23,6 +23,7 @@ __all__ = [
     "COACH_SYSTEM_MESSAGE",
     "LONGITUDINAL_SYSTEM_MESSAGE",
     "load_config",
+    "migrate_config_if_needed",
     "save_config",
     "analyze_fitness_data",
     "chat_with_history",

@@ -55,6 +55,9 @@ data/
 # Config with API keys (normally at ~/.config/garmin-sync/)
 config.toml
 
+# Training profile (personal training data)
+profile.toml
+
 # FIT files (personal health data)
 *.fit
 

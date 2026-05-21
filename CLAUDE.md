@@ -15,7 +15,7 @@ A Python CLI tool that syncs Garmin Connect and HEVY fitness data to a local SQL
 
 ```
 src/garmin_sync/
-├── cli.py                  # Typer CLI (24 commands across 8 groups)
+├── cli.py                  # Typer CLI (25 commands across 8 groups + setup wizard)
 ├── config/
 │   ├── paths.py            # Platform-aware path defaults (platformdirs)
 │   └── settings.py         # Pydantic Settings (env var config)
@@ -105,14 +105,17 @@ The interactive chat (`garmin-sync analyze chat`) uses OpenAI's function calling
 ### Configuration
 
 ```toml
-# ~/.config/garmin-sync/config.toml
+# ~/.config/garmin-sync/config.toml (secrets)
 [openai]
 api_key = "sk-..."
 model = "o3-mini"        # Used for non-tool chat
 use_tools = true         # Enable tool calling (uses gpt-5.4)
 enabled = true
+```
 
-[analysis]
+```toml
+# ~/.config/garmin-sync/profile.toml (training profile)
+[training]
 timezone = "America/New_York"
 schedule = """
 Monday: Rest day
@@ -212,9 +215,10 @@ garmin-sync hevy volume   # Volume by muscle group
 
 | File | When to modify |
 |------|----------------|
-| `cli.py` | Adding CLI commands |
-| `config/paths.py` | Platform-aware path defaults (single source of truth) |
-| `config/settings.py` | Adding configurable settings |
+| `cli.py` | Adding CLI commands (setup wizard helpers: `_configure_openai`, `_configure_training_profile`, `_configure_hevy`) |
+| `config/paths.py` | Platform-aware path defaults (single source of truth, includes `default_profile_path`) |
+| `config/settings.py` | Adding configurable settings (`profile_path` property) |
+| `ai/config.py` | Config load/save (split: config.toml secrets + profile.toml training data) |
 | `tools/executor.py` | Adding/modifying tool implementations |
 | `ai/tools.py` | Adding OpenAI tool schemas |
 | `mcp/server.py` | MCP server configuration |
@@ -259,7 +263,7 @@ pytest tests/unit/test_ai_tools.py -v # Tool calling tests
 pytest --cov=garmin_sync         # With coverage
 ```
 
-**520+ tests** covering all modules.
+**540+ tests** covering all modules.
 
 ## Configuration
 
@@ -272,7 +276,8 @@ Defaults are managed by `config/paths.py` via `platformdirs`. macOS hardcodes XD
 | SQLite database | `~/.local/share/garmin-sync/garmin.db` | `%LOCALAPPDATA%\garmin-sync\garmin.db` |
 | AI analysis reports | `~/.local/share/garmin-sync/reports/` | `%LOCALAPPDATA%\garmin-sync\reports\` |
 | Scheduled sync logs | `~/.local/share/garmin-sync/logs/` | `%LOCALAPPDATA%\garmin-sync\logs\` |
-| AI + HEVY config | `~/.config/garmin-sync/config.toml` | `%LOCALAPPDATA%\garmin-sync\config.toml` |
+| API keys + settings | `~/.config/garmin-sync/config.toml` | `%LOCALAPPDATA%\garmin-sync\config.toml` |
+| Training profile | `~/.config/garmin-sync/profile.toml` | `%LOCALAPPDATA%\garmin-sync\profile.toml` |
 | OAuth tokens | `~/.garminconnect/` | `~/.garminconnect/` |
 
 ### Environment Variables
@@ -299,8 +304,10 @@ Prefix: `GARMIN_SYNC_`
 ```bash
 # Setup
 pip install -e .
+garmin-sync setup              # Interactive wizard (Garmin + OpenAI + profile + HEVY)
+# Or manually:
 garmin-sync auth login
-garmin-sync analyze configure  # Set up OpenAI + schedule
+garmin-sync analyze configure
 garmin-sync hevy login         # Optional: HEVY integration
 
 # Daily use

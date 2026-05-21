@@ -81,6 +81,110 @@ def main(
     pass
 
 
+# ==================== Setup Wizard ====================
+
+
+@app.command("setup")
+def setup_wizard(
+    skip_garmin: bool = typer.Option(False, "--skip-garmin", help="Skip Garmin login"),
+    skip_openai: bool = typer.Option(False, "--skip-openai", help="Skip OpenAI setup"),
+    skip_hevy: bool = typer.Option(False, "--skip-hevy", help="Skip HEVY setup"),
+):
+    """Interactive setup wizard. Configures Garmin, OpenAI, HEVY, and training profile."""
+    from garmin_sync.ai import load_config, save_config
+    from garmin_sync.ai.config import migrate_config_if_needed
+    from rich.panel import Panel
+
+    settings = get_settings()
+
+    # Migrate old single-file config if needed
+    if migrate_config_if_needed(settings.ai_config_path, settings.profile_path):
+        console.print("[dim]Migrated config to split layout (config.toml + profile.toml)[/dim]\n")
+
+    current_config = load_config(settings.ai_config_path, settings.profile_path)
+
+    console.print(Panel("[bold]garmin-sync Setup Wizard[/bold]", expand=False))
+    console.print()
+
+    steps_run = 0
+
+    # Step 1: Garmin Connect
+    if not skip_garmin:
+        console.print("[bold cyan]Step 1/4: Garmin Connect Login[/bold cyan]")
+        console.print("─" * 40)
+
+        auth = get_auth_manager(settings.garth_token_dir)
+        status = auth.get_status()
+
+        if status["authenticated"]:
+            console.print(f"[green]Already logged in[/green] (tokens in {settings.garth_token_dir})")
+            if typer.confirm("Re-authenticate?", default=False):
+                email = Prompt.ask("Enter your Garmin email")
+                password = Prompt.ask("Enter your Garmin password", password=True)
+                with console.status("Logging in to Garmin Connect..."):
+                    try:
+                        auth.login(email, password)
+                        console.print("[green]Successfully logged in![/green]")
+                    except AuthenticationError as e:
+                        console.print(f"[red]Login failed: {e}[/red]")
+        else:
+            email = Prompt.ask("Enter your Garmin email")
+            password = Prompt.ask("Enter your Garmin password", password=True)
+            with console.status("Logging in to Garmin Connect..."):
+                try:
+                    auth.login(email, password)
+                    console.print("[green]Successfully logged in![/green]")
+                except AuthenticationError as e:
+                    console.print(f"[red]Login failed: {e}[/red]")
+                    console.print("[yellow]You can retry later with: garmin-sync auth login[/yellow]")
+
+        console.print()
+        steps_run += 1
+
+    # Step 2: OpenAI
+    if not skip_openai:
+        console.print("[bold cyan]Step 2/4: OpenAI Configuration[/bold cyan]")
+        console.print("─" * 40)
+        _configure_openai(current_config)
+        console.print()
+        steps_run += 1
+
+    # Step 3: Training Profile
+    if not skip_openai:  # Profile pairs with OpenAI — skip together
+        console.print("[bold cyan]Step 3/4: Training Profile[/bold cyan]")
+        console.print("─" * 40)
+        _configure_training_profile(current_config)
+        console.print()
+        steps_run += 1
+
+    # Step 4: HEVY
+    if not skip_hevy:
+        console.print("[bold cyan]Step 4/4: HEVY Integration (optional)[/bold cyan]")
+        console.print("─" * 40)
+        if typer.confirm("Do you use HEVY for strength training?", default=False):
+            _configure_hevy(current_config)
+        else:
+            console.print("[dim]Skipping HEVY setup[/dim]")
+        console.print()
+        steps_run += 1
+
+    if steps_run == 0:
+        console.print("[yellow]All steps skipped — nothing to configure.[/yellow]")
+        raise typer.Exit(0)
+
+    # Save
+    save_config(current_config, settings.ai_config_path, settings.profile_path)
+
+    console.print(Panel("[bold green]Setup Complete![/bold green]", expand=False))
+    console.print(f"  Secrets saved to:  {settings.ai_config_path}")
+    console.print(f"  Profile saved to:  {settings.profile_path}")
+    console.print()
+    console.print("[bold]Next steps:[/bold]")
+    console.print("  garmin-sync sync all           # Sync your data")
+    console.print("  garmin-sync analyze chat        # Chat with AI coach")
+    console.print("  garmin-sync schedule install    # Enable daily auto-sync")
+
+
 # ==================== Auth Commands ====================
 
 @auth_app.command("login")
@@ -190,7 +294,7 @@ def sync_all_cmd(
         hevy_result = None
         try:
             from garmin_sync.ai.config import load_config
-            ai_config = load_config(settings.ai_config_path)
+            ai_config = load_config(settings.ai_config_path, settings.profile_path)
 
             if ai_config.hevy.is_configured() and ai_config.hevy.enabled:
                 console.print("[dim]Syncing HEVY strength training data...[/dim]")
@@ -719,7 +823,7 @@ def _run_analysis() -> tuple[bool, str, str]:
     settings.ensure_directories()
 
     # Load AI config
-    ai_config = load_config(settings.ai_config_path)
+    ai_config = load_config(settings.ai_config_path, settings.profile_path)
 
     if not ai_config.is_configured():
         return False, "AI not configured. Run 'garmin-sync analyze configure' first.", ""
@@ -852,7 +956,7 @@ def _run_longitudinal_analysis(
 
     settings = get_settings()
     settings.ensure_directories()
-    ai_config = load_config(settings.ai_config_path)
+    ai_config = load_config(settings.ai_config_path, settings.profile_path)
 
     if not ai_config.is_configured():
         return False, "AI not configured. Run 'garmin-sync analyze configure' first.", ""
@@ -957,20 +1061,11 @@ def analyze_longitudinal_cmd(
         raise typer.Exit(1)
 
 
-@analyze_app.command("configure")
-def analyze_configure():
-    """Configure AI analysis settings (API key, schedule, etc.)."""
-    from garmin_sync.ai import AIConfig, load_config, save_config
-
-    settings = get_settings()
-    current_config = load_config(settings.ai_config_path)
-
-    console.print("[bold]AI Analysis Configuration[/bold]")
-    console.print()
-
+def _configure_openai(config):
+    """Prompt for OpenAI API key, model, and enabled flag.  Mutates *config* in place."""
     # API Key
-    if current_config.api_key:
-        masked_key = current_config.api_key[:8] + "..." + current_config.api_key[-4:]
+    if config.api_key:
+        masked_key = config.api_key[:8] + "..." + config.api_key[-4:]
         console.print(f"Current API key: {masked_key}")
         update_key = typer.confirm("Update API key?", default=False)
     else:
@@ -978,27 +1073,35 @@ def analyze_configure():
 
     if update_key:
         api_key = Prompt.ask("Enter your OpenAI API key", password=True)
-        current_config.api_key = api_key
+        config.api_key = api_key
 
     # Model
-    console.print(f"\nCurrent model: {current_config.model}")
+    console.print(f"\nCurrent model: {config.model}")
     model = Prompt.ask(
         "Model to use",
-        default=current_config.model,
+        default=config.model,
         choices=["o3-mini", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
     )
-    current_config.model = model
+    config.model = model
 
     # Enabled
-    current_config.enabled = typer.confirm(
+    config.enabled = typer.confirm(
         "Enable automatic analysis after sync?",
-        default=current_config.enabled,
+        default=config.enabled,
     )
+
+
+def _configure_training_profile(config):
+    """Prompt for training schedule, context, and timezone.  Mutates *config* in place."""
+    # Timezone
+    console.print(f"\nCurrent timezone: {config.timezone}")
+    tz = Prompt.ask("Timezone", default=config.timezone)
+    config.timezone = tz
 
     # Schedule
     console.print("\n[bold]Weekly Training Schedule[/bold]")
     console.print("This helps the AI understand your typical week.")
-    console.print(f"Current schedule:\n{current_config.schedule}")
+    console.print(f"Current schedule:\n{config.schedule}")
     if typer.confirm("\nUpdate schedule?", default=False):
         console.print("Enter your weekly schedule (press Enter twice when done):")
         lines = []
@@ -1008,17 +1111,72 @@ def analyze_configure():
                 break
             lines.append(line)
         if lines:
-            current_config.schedule = "\n".join(lines)
+            config.schedule = "\n".join(lines)
 
     # User context
-    console.print(f"\nCurrent context: {current_config.user_context or '(none)'}")
+    console.print(f"\nCurrent context: {config.user_context or '(none)'}")
     if typer.confirm("Update training context/goals?", default=False):
         context = Prompt.ask("Enter your training context (goals, focus areas, etc.)")
-        current_config.user_context = context
+        config.user_context = context
+
+
+def _configure_hevy(config):
+    """Prompt for HEVY API key and test connection.  Mutates *config* in place."""
+    console.print(
+        "Get your API key from: "
+        "[link=https://hevy.com/settings?developer]https://hevy.com/settings?developer[/link]"
+    )
+    console.print("[dim]Note: Requires HEVY Pro subscription[/dim]")
+    console.print()
+
+    if config.hevy.api_key:
+        masked_key = config.hevy.api_key[:8] + "..." + config.hevy.api_key[-4:]
+        console.print(f"Current API key: {masked_key}")
+        update_key = typer.confirm("Update API key?", default=False)
+    else:
+        update_key = True
+
+    if update_key:
+        api_key = Prompt.ask("Enter your HEVY API key", password=True)
+        config.hevy.api_key = api_key
+
+    config.hevy.enabled = typer.confirm(
+        "Enable HEVY sync?",
+        default=config.hevy.enabled,
+    )
+
+    # Test connection
+    if config.hevy.is_configured():
+        with console.status("Testing HEVY connection..."):
+            try:
+                from garmin_sync.hevy import HevyClient
+                client = HevyClient(config.hevy.api_key)
+                count_data = client.get_workout_count()
+                workout_count = count_data.get("workout_count", 0)
+                console.print(f"[green]Connected! Found {workout_count} workouts in HEVY.[/green]")
+            except Exception as e:
+                console.print(f"[red]Connection failed: {e}[/red]")
+
+
+@analyze_app.command("configure")
+def analyze_configure():
+    """Configure AI analysis settings (API key, schedule, etc.)."""
+    from garmin_sync.ai import load_config, save_config
+
+    settings = get_settings()
+    current_config = load_config(settings.ai_config_path, settings.profile_path)
+
+    console.print("[bold]AI Analysis Configuration[/bold]")
+    console.print()
+
+    _configure_openai(current_config)
+    _configure_training_profile(current_config)
 
     # Save
-    save_config(current_config, settings.ai_config_path)
-    console.print(f"\n[green]Configuration saved to: {settings.ai_config_path}[/green]")
+    save_config(current_config, settings.ai_config_path, settings.profile_path)
+    console.print(f"\n[green]Configuration saved![/green]")
+    console.print(f"  Secrets:  {settings.ai_config_path}")
+    console.print(f"  Profile:  {settings.profile_path}")
 
 
 @analyze_app.command("view")
@@ -1109,7 +1267,7 @@ def analyze_chat():
     from garmin_sync.db.repository import Repository
 
     settings = get_settings()
-    ai_config = load_config(settings.ai_config_path)
+    ai_config = load_config(settings.ai_config_path, settings.profile_path)
 
     if not ai_config.is_configured():
         console.print("[red]AI not configured.[/red]")
@@ -1214,7 +1372,7 @@ def _get_hevy_client():
     from garmin_sync.hevy import HevyClient
 
     settings = get_settings()
-    ai_config = load_config(settings.ai_config_path)
+    ai_config = load_config(settings.ai_config_path, settings.profile_path)
 
     if not ai_config.hevy.is_configured():
         return None
@@ -1243,44 +1401,15 @@ def hevy_login():
     from garmin_sync.ai import load_config, save_config
 
     settings = get_settings()
-    current_config = load_config(settings.ai_config_path)
+    current_config = load_config(settings.ai_config_path, settings.profile_path)
 
     console.print("[bold]HEVY Configuration[/bold]")
     console.print()
-    console.print("Get your API key from: [link=https://hevy.com/settings?developer]https://hevy.com/settings?developer[/link]")
-    console.print("[dim]Note: Requires HEVY Pro subscription[/dim]")
-    console.print()
 
-    if current_config.hevy.api_key:
-        masked_key = current_config.hevy.api_key[:8] + "..." + current_config.hevy.api_key[-4:]
-        console.print(f"Current API key: {masked_key}")
-        update_key = typer.confirm("Update API key?", default=False)
-    else:
-        update_key = True
+    _configure_hevy(current_config)
 
-    if update_key:
-        api_key = Prompt.ask("Enter your HEVY API key", password=True)
-        current_config.hevy.api_key = api_key
-
-    current_config.hevy.enabled = typer.confirm(
-        "Enable HEVY sync?",
-        default=current_config.hevy.enabled,
-    )
-
-    save_config(current_config, settings.ai_config_path)
-    console.print(f"\n[green]Configuration saved to: {settings.ai_config_path}[/green]")
-
-    # Test connection
-    if current_config.hevy.is_configured():
-        with console.status("Testing HEVY connection..."):
-            try:
-                from garmin_sync.hevy import HevyClient
-                client = HevyClient(current_config.hevy.api_key)
-                count_data = client.get_workout_count()
-                workout_count = count_data.get("workout_count", 0)
-                console.print(f"[green]Connected! Found {workout_count} workouts in HEVY.[/green]")
-            except Exception as e:
-                console.print(f"[red]Connection failed: {e}[/red]")
+    save_config(current_config, settings.ai_config_path, settings.profile_path)
+    console.print(f"\n[green]Configuration saved![/green]")
 
 
 @hevy_app.command("sync")
@@ -1291,7 +1420,7 @@ def hevy_sync(
     from garmin_sync.ai import load_config
 
     settings = get_settings()
-    ai_config = load_config(settings.ai_config_path)
+    ai_config = load_config(settings.ai_config_path, settings.profile_path)
 
     if not ai_config.hevy.is_configured():
         console.print("[red]HEVY not configured.[/red]")
@@ -1354,7 +1483,7 @@ def hevy_status():
     from garmin_sync.db.repository import Repository
 
     settings = get_settings()
-    ai_config = load_config(settings.ai_config_path)
+    ai_config = load_config(settings.ai_config_path, settings.profile_path)
 
     # Configuration status
     table = Table(title="HEVY Configuration")

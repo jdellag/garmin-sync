@@ -7,7 +7,12 @@ from typing import Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from garmin_sync.config.paths import default_config_path, default_data_dir, default_garth_token_dir
+from garmin_sync.config.paths import (
+    default_config_path,
+    default_data_dir,
+    default_garth_token_dir,
+    default_profile_path,
+)
 
 
 class Settings(BaseSettings):
@@ -106,8 +111,13 @@ class Settings(BaseSettings):
 
     @property
     def ai_config_path(self) -> Path:
-        """Path to AI configuration file."""
+        """Path to AI configuration file (secrets + technical settings)."""
         return default_config_path()
+
+    @property
+    def profile_path(self) -> Path:
+        """Path to training profile file (schedule, goals, timezone)."""
+        return default_profile_path()
 
     def ensure_directories(self) -> None:
         """Create all required directories if they don't exist."""

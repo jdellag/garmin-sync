@@ -1,0 +1,17 @@
+# garmin-sync configuration (secrets + technical settings)
+#
+# Copy to: ~/.config/garmin-sync/config.toml
+# Or run:  garmin-sync setup
+#
+# This file contains API keys — keep it private (chmod 0o600).
+
+[openai]
+api_key = ""           # Your OpenAI API key (https://platform.openai.com/api-keys)
+model = "o3-mini"      # Model for analysis: o3-mini, gpt-4o, gpt-4o-mini, gpt-4-turbo
+enabled = true         # Enable AI analysis
+use_tools = true       # Enable tool calling in chat (uses gpt-5.4)
+
+[hevy]
+api_key = ""           # Your HEVY API key (https://hevy.com/settings?developer)
+enabled = true         # Enable HEVY sync (requires Pro subscription)
+sync_days = 30         # Days of workout history to sync

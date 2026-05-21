@@ -33,19 +33,47 @@ garmin-sync --version
 
 ## Quick Start
 
+### One-command setup (recommended)
+
+```bash
+garmin-sync setup
+```
+
+The interactive wizard walks you through:
+1. Garmin Connect login (OAuth)
+2. OpenAI API key and model selection
+3. Training schedule and goals
+4. HEVY integration (optional)
+
+### Manual setup
+
 ```bash
 # 1. Login to Garmin
 garmin-sync auth login
 
-# 2. Sync your data
-garmin-sync sync all
-
-# 3. Configure AI (optional)
+# 2. Configure AI + training profile
 garmin-sync analyze configure
 
-# 4. Chat with your AI coach
+# 3. (Optional) Configure HEVY strength tracking
+garmin-sync hevy login
+
+# 4. Sync your data
+garmin-sync sync all
+
+# 5. Chat with your AI coach
 garmin-sync analyze chat
 ```
+
+### Configuration files
+
+After setup, your configuration lives in two files:
+
+| File | Contents | Permissions |
+|------|----------|-------------|
+| `~/.config/garmin-sync/config.toml` | API keys, model settings | `0o600` (owner-only) |
+| `~/.config/garmin-sync/profile.toml` | Training schedule, goals, timezone | `0o644` (readable) |
+
+Example templates are in [`templates/`](templates/) — copy and edit if you prefer manual configuration.
 
 ## MCP Server for Claude Desktop
 
@@ -100,14 +128,17 @@ The AI coach uses **tool calling** to query your data on-demand. Ask questions l
 ### Configuration
 
 ```toml
-# ~/.config/garmin-sync/config.toml
+# ~/.config/garmin-sync/config.toml (secrets)
 [openai]
 api_key = "sk-..."
 model = "o3-mini"        # For non-tool chat
 use_tools = true         # Enable tool calling (uses gpt-5.4)
 enabled = true
+```
 
-[analysis]
+```toml
+# ~/.config/garmin-sync/profile.toml (training profile)
+[training]
 timezone = "America/New_York"
 schedule = """
 Monday: Rest day
@@ -246,7 +277,8 @@ All data is stored locally on your machine:
 | AI analysis reports | `~/.local/share/garmin-sync/reports/` | `%LOCALAPPDATA%\garmin-sync\reports\` |
 | Scheduled sync logs | `~/.local/share/garmin-sync/logs/` | `%LOCALAPPDATA%\garmin-sync\logs\` |
 | FIT files | `~/.local/share/garmin-sync/fit_files/` | `%LOCALAPPDATA%\garmin-sync\fit_files\` |
-| AI + HEVY config | `~/.config/garmin-sync/config.toml` | `%LOCALAPPDATA%\garmin-sync\config.toml` |
+| API keys + settings | `~/.config/garmin-sync/config.toml` | `%LOCALAPPDATA%\garmin-sync\config.toml` |
+| Training profile | `~/.config/garmin-sync/profile.toml` | `%LOCALAPPDATA%\garmin-sync\profile.toml` |
 | OAuth tokens | `~/.garminconnect/` | `~/.garminconnect/` |
 
 Path defaults are managed by `platformdirs`. Override with `GARMIN_SYNC_DATA_DIR` environment variable.

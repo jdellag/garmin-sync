@@ -1,0 +1,27 @@
+# garmin-sync training profile
+#
+# Copy to: ~/.config/garmin-sync/profile.toml
+# Or run:  garmin-sync setup
+#
+# This file contains your training preferences — no secrets.
+# Safe to share or version-control.
+
+[training]
+timezone = "America/New_York"
+
+schedule = """
+Monday: Rest day or easy recovery
+Tuesday: Speed/interval workout
+Wednesday: Easy run
+Thursday: Tempo or threshold run
+Friday: Rest or cross-training
+Saturday: Long run
+Sunday: Easy run or rest"""
+
+user_context = """
+Describe your training goals, focus areas, and any relevant history.
+Examples:
+  - Training for a spring marathon, currently in base-building phase.
+  - Focus on improving 5K time. History of right knee issues.
+  - General fitness, mixing running and strength training 4x/week.
+"""
