@@ -365,7 +365,9 @@ src/garmin_sync/
 
 ## License
 
-MIT License
+Copyright (c) 2026 James Della-Giustina. All rights reserved. See [LICENSE](LICENSE) for details.
+
+This is proprietary software. Redistribution or commercial use requires written permission from the author.
 
 ## Acknowledgments
 
