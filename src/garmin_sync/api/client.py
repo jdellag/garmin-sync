@@ -372,6 +372,30 @@ class GarminClient:
         except Exception as e:
             raise GarminAPIError(f"Batch HRV fetch failed: {e}") from e
 
+    # ==================== Respiration & SpO2 ====================
+
+    def get_respiration_data(self, day: date) -> dict:
+        """Get all-day respiration data for a specific date.
+
+        Args:
+            day: Date to get respiration data for
+
+        Returns:
+            Respiration data dictionary
+        """
+        return self._api_call("get_respiration_data", day.isoformat()) or {}
+
+    def get_spo2_data(self, day: date) -> dict:
+        """Get all-day SpO2 data for a specific date.
+
+        Args:
+            day: Date to get SpO2 data for
+
+        Returns:
+            SpO2 data dictionary
+        """
+        return self._api_call("get_spo2_data", day.isoformat()) or {}
+
     # ==================== Utility ====================
 
     def get_rate_limit_status(self) -> dict:

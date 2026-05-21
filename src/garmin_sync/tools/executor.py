@@ -86,6 +86,7 @@ class ToolExecutor:
         rhr = self.agg.get_resting_hr_trend(today)
         readiness = self.agg.get_training_readiness_latest(today)
         respiration = self.agg.get_sleep_respiration_trends(week_ago, today)
+        allday_resp = self.agg.get_allday_respiration_spo2(week_ago, today)
         stress_recovery = self.agg.get_stress_recovery_correlation(month_ago, today)
         sleep_performance = self.agg.get_sleep_performance_correlation(month_ago, today)
 
@@ -124,6 +125,9 @@ class ToolExecutor:
                 "avg_rem_pct": sleep.get("avg_rem_pct"),
                 "avg_respiration": respiration.get("avg_respiration"),
                 "avg_spo2": respiration.get("avg_spo2"),
+                "allday_avg_respiration": allday_resp.get("avg_respiration"),
+                "allday_avg_spo2": allday_resp.get("avg_spo2"),
+                "allday_min_spo2": allday_resp.get("min_spo2"),
             },
             "body_battery": {
                 "overnight_recovery": bb.get("avg_overnight_recovery"),
@@ -413,8 +417,9 @@ class ToolExecutor:
         vo2 = self.agg.get_vo2_max_trend(start, today)
         elevation = self.agg.get_elevation_summary(start, today)
         load = self.agg.get_training_load_trend(today)
+        pacing = self.agg.get_pacing_trends(start, today)
 
-        return {
+        result = {
             "cadence": {
                 "avg": cadence.get("avg_cadence"),
                 "max": cadence.get("max_cadence"),
@@ -442,6 +447,16 @@ class ToolExecutor:
                 "balance": load.get("training_effect_balance"),
             },
         }
+
+        if pacing.get("activities_with_splits", 0) > 0:
+            result["pacing"] = {
+                "activities_with_splits": pacing["activities_with_splits"],
+                "avg_pace_cov": pacing.get("avg_pace_cov"),
+                "negative_split_pct": pacing.get("negative_split_pct"),
+                "consistency_rating": pacing.get("consistency_rating"),
+            }
+
+        return result
 
     def sync_garmin_data(self, days: int = 1) -> dict:
         """Sync latest data from Garmin Connect (and HEVY if configured).
@@ -506,6 +521,17 @@ class ToolExecutor:
             ):
                 pace_sec_per_km = act.duration_seconds / (act.distance_meters / 1000)
                 data["pace_min_per_km"] = round(pace_sec_per_km / 60, 2)
+
+            # Add splits summary for activities with FIT-parsed split data
+            if getattr(act, "fit_parsed", False):
+                pacing = self.agg.get_pacing_analysis(act.activity_id)
+                if pacing:
+                    data["splits_summary"] = {
+                        "count": pacing["split_count"],
+                        "avg_pace": pacing["avg_pace"],
+                        "pace_cov": pacing["pace_cov"],
+                        "is_negative_split": pacing["is_negative_split"],
+                    }
 
             result.append(data)
         return result

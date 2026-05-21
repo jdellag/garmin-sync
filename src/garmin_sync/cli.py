@@ -1,5 +1,12 @@
 """CLI commands for garmin-sync."""
 
+import warnings
+
+# Suppress cosmetic warning from mismatched transitive dependency versions.
+# The real fix is `pip install --upgrade requests urllib3`, but this avoids
+# spamming every CLI invocation when the user's env is slightly out of date.
+warnings.filterwarnings("ignore", message="urllib3.*doesn't match a supported version")
+
 from datetime import date, timedelta
 
 import typer
@@ -425,6 +432,8 @@ def sync_health_cmd(
             ("Stress", sync_manager.sync_stress),
             ("HRV", sync_manager.sync_hrv),
             ("Body Battery", sync_manager.sync_body_battery),
+            ("Respiration", sync_manager.sync_respiration),
+            ("SpO2", sync_manager.sync_spo2),
         ]
 
         total_synced = 0
@@ -439,6 +448,39 @@ def sync_health_cmd(
 
     except AuthenticationError as e:
         console.print(f"[red]Authentication error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@sync_app.command("fit-reparse")
+def sync_fit_reparse(
+    force: bool = typer.Option(False, "--force", "-f", help="Re-parse all FIT files, not just unparsed"),
+):
+    """Re-parse existing FIT files to extract laps and pace splits.
+
+    Useful after upgrading garmin-sync to backfill lap/split data for
+    activities whose FIT files are already on disk.
+    """
+    console.print("Re-parsing FIT files for laps and pace splits...")
+
+    try:
+        sync_manager = _get_sync_manager()
+
+        with console.status("Parsing FIT files..."):
+            result = sync_manager.reparse_fit_files(force=force)
+
+        if result.success:
+            console.print(f"[green]Parsed {result.records_synced} FIT files[/green]")
+            if result.records_skipped:
+                console.print(f"  (skipped {result.records_skipped} missing files)")
+        else:
+            console.print(f"[yellow]Parsed with errors: {result.records_synced} files[/yellow]")
+            for error in result.errors[:5]:
+                console.print(f"  - {error}")
+            if len(result.errors) > 5:
+                console.print(f"  ... and {len(result.errors) - 5} more")
+
+    except Exception as e:
+        console.print(f"[red]FIT reparse failed: {e}[/red]")
         raise typer.Exit(1)
 
 
@@ -1093,31 +1135,64 @@ def _configure_openai(config):
 
 def _configure_training_profile(config):
     """Prompt for training schedule, context, and timezone.  Mutates *config* in place."""
+    from garmin_sync.ai.config import DEFAULT_SCHEDULE
+
     # Timezone
     console.print(f"\nCurrent timezone: {config.timezone}")
     tz = Prompt.ask("Timezone", default=config.timezone)
     config.timezone = tz
 
-    # Schedule
+    # Schedule — default to "yes, set it" when the user still has the
+    # generic placeholder so first-time users actually get prompted.
+    is_default_schedule = config.schedule.strip() == DEFAULT_SCHEDULE.strip()
     console.print("\n[bold]Weekly Training Schedule[/bold]")
     console.print("This helps the AI understand your typical week.")
-    console.print(f"Current schedule:\n{config.schedule}")
-    if typer.confirm("\nUpdate schedule?", default=False):
-        console.print("Enter your weekly schedule (press Enter twice when done):")
-        lines = []
-        while True:
-            line = Prompt.ask("", default="")
-            if not line:
-                break
-            lines.append(line)
-        if lines:
-            config.schedule = "\n".join(lines)
+    if not is_default_schedule:
+        console.print(f"Current schedule:\n{config.schedule}")
 
-    # User context
-    console.print(f"\nCurrent context: {config.user_context or '(none)'}")
-    if typer.confirm("Update training context/goals?", default=False):
-        context = Prompt.ask("Enter your training context (goals, focus areas, etc.)")
-        config.user_context = context
+    should_update = typer.confirm(
+        "Set your training schedule?" if is_default_schedule else "Update schedule?",
+        default=is_default_schedule,
+    )
+    if should_update:
+        # Parse existing schedule into per-day defaults
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        current_by_day: dict[str, str] = {}
+        for line in config.schedule.strip().splitlines():
+            for day in days:
+                if line.strip().lower().startswith(day.lower()):
+                    # Strip "Monday: " prefix to get just the description
+                    after_colon = line.split(":", 1)
+                    current_by_day[day] = after_colon[1].strip() if len(after_colon) > 1 else ""
+                    break
+
+        console.print("[dim]Enter what you do each day (press Enter to keep default):[/dim]")
+        lines = []
+        for day in days:
+            default = current_by_day.get(day, "")
+            value = Prompt.ask(f"  {day}", default=default)
+            lines.append(f"{day}: {value}")
+
+        config.schedule = "\n".join(lines)
+
+    # User context — same logic: prompt by default when empty.
+    has_context = bool(config.user_context and config.user_context.strip())
+    if has_context:
+        console.print(f"\nCurrent context: {config.user_context}")
+    else:
+        console.print("\n[dim]No training context set yet.[/dim]")
+
+    should_update_ctx = typer.confirm(
+        "Set your training goals/context?" if not has_context else "Update training context/goals?",
+        default=not has_context,
+    )
+    if should_update_ctx:
+        context = Prompt.ask(
+            "Enter your training context (goals, focus areas, etc.)",
+            default=config.user_context or "",
+        )
+        if context:
+            config.user_context = context
 
 
 def _configure_hevy(config):

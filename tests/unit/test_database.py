@@ -466,9 +466,9 @@ class TestHRDrift:
 class TestSchemaMigration:
     """Test database schema migration."""
 
-    def test_schema_version_is_5(self):
-        """Test schema version is 5."""
-        assert SCHEMA_VERSION == 5
+    def test_schema_version_is_6(self):
+        """Test schema version is 6."""
+        assert SCHEMA_VERSION == 6
 
     def test_migrate_v1_to_v2_adds_hr_drift(self, temp_dir):
         """Test migration adds hr_drift column to activities."""
@@ -535,7 +535,7 @@ class TestSchemaMigration:
         assert "hr_drift" in columns
 
         # Verify schema version was updated (should be 4 after all migrations)
-        assert db.get_schema_version() == 5
+        assert db.get_schema_version() == 6
 
         db.close()
 
@@ -547,7 +547,7 @@ class TestSchemaMigration:
         # Run migration again (should be no-op since already at v4)
         db.migrate()
 
-        assert db.get_schema_version() == 5
+        assert db.get_schema_version() == 6
         db.close()
 
     def test_migrate_v2_to_v3_adds_chat_messages(self, temp_dir):
@@ -586,7 +586,7 @@ class TestSchemaMigration:
         assert cursor.fetchone() is not None
 
         # Verify schema version was updated (should be 4 after all migrations)
-        assert db.get_schema_version() == 5
+        assert db.get_schema_version() == 6
 
         db.close()
 
@@ -650,6 +650,6 @@ class TestSchemaMigration:
         assert cursor.fetchone() is not None
 
         # Verify schema version was updated
-        assert db.get_schema_version() == 5
+        assert db.get_schema_version() == 6
 
         db.close()

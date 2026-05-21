@@ -188,6 +188,9 @@ All metrics are computed in `aggregators.py` and exposed via tools.
 | **Monthly Best Activities** | `get_monthly_best_activities()` | Longest distance, highest load, best aerobic efficiency |
 | **Cardio PR Detection** | `detect_activity_prs()` | Fastest 5K/10K/half, longest run, highest training load |
 | **Strength PR Surfacing** | `get_strength_prs()` | Surface HEVY-flagged PRs with exercise context |
+| **Pacing Analysis** | `get_pacing_analysis()` | Per-activity CoV, negative split detection, fastest/slowest split |
+| **Pacing Trends** | `get_pacing_trends()` | Cross-activity consistency rating, negative-split percentage |
+| **All-day Respiration/SpO2** | `get_allday_respiration_spo2()` | Avg respiration rate, avg/min SpO2 from dedicated daily tables |
 
 ### Risk Assessment (A:C Ratio)
 
@@ -263,7 +266,7 @@ pytest tests/unit/test_ai_tools.py -v # Tool calling tests
 pytest --cov=garmin_sync         # With coverage
 ```
 
-**540+ tests** covering all modules.
+**580+ tests** covering all modules.
 
 ## Configuration
 
@@ -355,3 +358,6 @@ garmin-sync schedule logs
 16. **Windows scheduler**: Uses `schtasks.exe` via `subprocess.run`. Batch wrapper paths are validated by `_validate_batch_path()` which rejects `"&|<>^%!` characters to prevent script injection.
 17. **`paths.py` macOS override**: `default_data_dir()` hardcodes XDG paths when `sys.platform == "darwin"` because `platformdirs` returns `~/Library/Application Support/` on macOS, which would orphan existing data at `~/.local/share/garmin-sync`.
 18. **Scheduler factory**: `scheduler/__init__.py` provides `get_scheduler()` which returns the `launchd` module on Darwin, `windows_task` on Windows, or `None` on Linux. CLI commands use this instead of `platform.system()` checks.
+19. **FIT parse scope**: `parse_fit_full()` extracts laps, per-km splits, and HR drift from ALL activity types >= 5 min (not just running). Indoor/treadmill activities without distance produce no splits. Use `garmin-sync sync fit-reparse` to backfill existing FIT files.
+20. **`activity_laps` / `activity_splits`**: Activity-linked tables, NOT daily — do NOT add to `_ALLOWED_DAILY_TABLES`. `respiration_daily` and `spo2_daily` ARE daily and are in the allowlist.
+21. **`fit_parsed` column**: Tracks whether full FIT parse (laps + splits) has been done, separate from `has_fit_file` which just means the raw file is on disk.

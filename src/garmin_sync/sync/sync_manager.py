@@ -11,13 +11,16 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from garmin_sync.api.client import GarminClient, get_garmin_client
 from garmin_sync.config import get_settings
-from garmin_sync.sync.fit_parser import compute_hr_drift_from_fit
+from garmin_sync.sync.fit_parser import compute_hr_drift_from_fit, parse_fit_full
 
 # Activity types where HR drift is meaningful
 HR_DRIFT_ACTIVITY_TYPES = {"running", "treadmill_running", "elliptical"}
 
 # Minimum duration in seconds for HR drift calculation (20 minutes)
 HR_DRIFT_MIN_DURATION = 1200
+
+# Minimum duration in seconds for full FIT parsing (5 minutes)
+FIT_PARSE_MIN_DURATION = 300
 
 # Re-fetch this many recent days even when a DB row already exists (Garmin
 # can retroactively correct sleep scores, training readiness, etc.)
@@ -30,6 +33,8 @@ _DAILY_METRIC_TABLE = {
     "stress": "stress_daily",
     "hrv": "hrv_daily",
     "training_readiness": "training_readiness",
+    "respiration": "respiration_daily",
+    "spo2": "spo2_daily",
 }
 from garmin_sync.db.database import Database
 from garmin_sync.db.models import (
@@ -140,6 +145,8 @@ class SyncManager:
                     ("hrv", self.sync_hrv_detailed),
                     ("body_battery", self.sync_body_battery),
                     ("training_readiness", self.sync_training_readiness),
+                    ("respiration", self.sync_respiration),
+                    ("spo2", self.sync_spo2),
                 ]
             else:
                 health_types = [
@@ -150,6 +157,8 @@ class SyncManager:
                     ("hrv", self.sync_hrv),
                     ("body_battery", self.sync_body_battery),
                     ("training_readiness", self.sync_training_readiness),
+                    ("respiration", self.sync_respiration),
+                    ("spo2", self.sync_spo2),
                 ]
 
             for data_type, sync_func in health_types:
@@ -200,20 +209,33 @@ class SyncManager:
                     activity = Activity.from_api_response(activity_data)
                     activity.raw_json = json.dumps(activity_data)
 
-                    # Compute HR drift for qualifying activities
-                    should_compute_hr_drift = (
-                        activity.average_hr
+                    # Full FIT parse for activities with sufficient duration
+                    settings = get_settings()
+                    should_parse_fit = (
+                        settings.download_fit_files
                         and activity.duration_seconds
-                        and activity.duration_seconds >= HR_DRIFT_MIN_DURATION
-                        and activity.activity_type in HR_DRIFT_ACTIVITY_TYPES
+                        and activity.duration_seconds >= FIT_PARSE_MIN_DURATION
                     )
 
-                    if should_compute_hr_drift:
-                        hr_drift, fit_path = self._compute_hr_drift(activity.activity_id)
-                        activity.hr_drift = hr_drift
+                    if should_parse_fit:
+                        fit_path = self._download_and_store_fit(activity.activity_id)
                         if fit_path:
                             activity.has_fit_file = True
                             activity.fit_file_path = str(fit_path)
+                            try:
+                                fit_result = parse_fit_full(fit_path.read_bytes())
+                                activity.hr_drift = fit_result.hr_drift
+                                activity.fit_parsed = True
+                                if fit_result.laps:
+                                    self.repo.upsert_activity_laps(
+                                        activity.activity_id, fit_result.laps
+                                    )
+                                if fit_result.splits:
+                                    self.repo.upsert_activity_splits(
+                                        activity.activity_id, fit_result.splits
+                                    )
+                            except Exception:
+                                pass  # FIT parsing is non-critical
 
                     self.repo.upsert_activity(activity)
                     result.records_synced += 1
@@ -520,8 +542,9 @@ class SyncManager:
         end_date: date,
         force: bool,
         fetch_func: Callable,
-        model_class: type,
         upsert_func: Callable,
+        model_class: type | None = None,
+        parse_func: Callable | None = None,
     ) -> SyncResult:
         """Generic method for syncing daily metrics.
 
@@ -531,8 +554,11 @@ class SyncManager:
             end_date: End date
             force: Force re-download
             fetch_func: Function to fetch data from API
-            model_class: Model class with from_api_response method
             upsert_func: Repository function to upsert data
+            model_class: Model class with from_api_response(data) classmethod.
+                         Mutually exclusive with *parse_func*.
+            parse_func: Custom (current_date, data) -> model callable for models
+                        whose from_api_response needs the date separately.
         """
         result = SyncResult(data_type)
         table = _DAILY_METRIC_TABLE.get(data_type)
@@ -558,11 +584,14 @@ class SyncManager:
 
                     data = fetch_func(current_date)
                     if data:
-                        # Handle the date field - some APIs return calendarDate, others don't
-                        if "calendarDate" not in data:
-                            data["calendarDate"] = current_date.isoformat()
+                        if parse_func is not None:
+                            model = parse_func(current_date, data)
+                        else:
+                            # Handle the date field - some APIs return calendarDate, others don't
+                            if "calendarDate" not in data:
+                                data["calendarDate"] = current_date.isoformat()
+                            model = model_class.from_api_response(data)
 
-                        model = model_class.from_api_response(data)
                         model.raw_json = json.dumps(data)
                         upsert_func(model)
                         result.records_synced += 1
@@ -639,6 +668,135 @@ class SyncManager:
                 file=sys.stderr,
             )
             return None, fit_path  # Still return path even if parsing failed
+
+    def reparse_fit_files(self, force: bool = False) -> SyncResult:
+        """Re-parse existing FIT files on disk to extract laps and splits.
+
+        Useful for backfilling after the parser was expanded.  Only
+        touches activities whose FIT file is on disk.
+
+        Args:
+            force: If True, re-parse all FIT files.  Otherwise only
+                   those where ``fit_parsed`` is still 0.
+
+        Returns:
+            SyncResult with counts.
+        """
+        result = SyncResult("fit-reparse")
+
+        try:
+            if force:
+                # All activities with a FIT file
+                cursor = self.db.connection.cursor()
+                cursor.execute(
+                    "SELECT activity_id, fit_file_path FROM activities "
+                    "WHERE has_fit_file = 1 AND fit_file_path IS NOT NULL"
+                )
+                rows = cursor.fetchall()
+            else:
+                rows = self.repo.get_activities_needing_fit_parse()
+
+            for row in rows:
+                activity_id = row["activity_id"] if isinstance(row, dict) else row[0]
+                fit_file_path = row["fit_file_path"] if isinstance(row, dict) else row[1]
+
+                if not fit_file_path:
+                    continue
+
+                fit_path = Path(fit_file_path)
+                if not fit_path.exists():
+                    result.records_skipped += 1
+                    continue
+
+                try:
+                    fit_result = parse_fit_full(fit_path.read_bytes())
+                    if fit_result.laps:
+                        self.repo.upsert_activity_laps(activity_id, fit_result.laps)
+                    if fit_result.splits:
+                        self.repo.upsert_activity_splits(activity_id, fit_result.splits)
+
+                    # Update hr_drift if not already set
+                    if fit_result.hr_drift is not None:
+                        cursor = self.db.connection.cursor()
+                        cursor.execute(
+                            "UPDATE activities SET hr_drift = ?, fit_parsed = 1 "
+                            "WHERE activity_id = ?",
+                            (fit_result.hr_drift, activity_id),
+                        )
+                    else:
+                        self.repo.mark_activity_fit_parsed(activity_id)
+
+                    self.db.connection.commit()
+                    result.records_synced += 1
+                except Exception as e:
+                    result.add_error(f"FIT reparse {activity_id}: {e}")
+
+            self._update_sync_metadata("fit-reparse", result)
+
+        except Exception as e:
+            result.add_error(f"Failed to reparse FIT files: {e}")
+
+        return result
+
+    def sync_respiration(
+        self,
+        start_date: date,
+        end_date: date,
+        force: bool = False,
+    ) -> SyncResult:
+        """Sync all-day respiration data.
+
+        Args:
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+            force: Force re-sync of existing data
+
+        Returns:
+            SyncResult with sync statistics
+        """
+        from garmin_sync.db.models import RespirationDaily
+
+        return self._sync_daily_metric(
+            data_type="respiration",
+            start_date=start_date,
+            end_date=end_date,
+            force=force,
+            fetch_func=self.client.get_respiration_data,
+            upsert_func=self.repo.upsert_respiration_daily,
+            parse_func=lambda d, data: RespirationDaily.from_api_response(
+                d.isoformat(), data
+            ),
+        )
+
+    def sync_spo2(
+        self,
+        start_date: date,
+        end_date: date,
+        force: bool = False,
+    ) -> SyncResult:
+        """Sync all-day SpO2 data.
+
+        Args:
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+            force: Force re-sync of existing data
+
+        Returns:
+            SyncResult with sync statistics
+        """
+        from garmin_sync.db.models import SpO2Daily
+
+        return self._sync_daily_metric(
+            data_type="spo2",
+            start_date=start_date,
+            end_date=end_date,
+            force=force,
+            fetch_func=self.client.get_spo2_data,
+            upsert_func=self.repo.upsert_spo2_daily,
+            parse_func=lambda d, data: SpO2Daily.from_api_response(
+                d.isoformat(), data
+            ),
+        )
 
     def _update_sync_metadata(self, data_type: str, result: SyncResult):
         """Update sync metadata after a sync operation."""

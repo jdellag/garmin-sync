@@ -7,7 +7,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_recent_activities",
-            "description": "Get recent Garmin activities with metrics including duration, distance, heart rate, training load, and HR drift. Use this to see what workouts have been done recently.",
+            "description": "Get recent Garmin activities with metrics including duration, distance, heart rate, training load, HR drift, and per-km pace splits (with pacing consistency CoV and negative-split detection). Use this to see what workouts have been done recently.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -34,7 +34,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_recovery_status",
-            "description": "Get current recovery metrics for training decisions. Returns HRV (baseline, delta, status), sleep quality, body battery recovery, resting HR trend, training readiness score, stress-recovery correlation patterns (training vs rest day stress, high-stress-poor-recovery detection), and sleep-performance correlation (personal A-F grading, HRV-performance link).",
+            "description": "Get current recovery metrics for training decisions. Returns HRV (baseline, delta, status), sleep quality (with all-day respiration rate and SpO2), body battery recovery, resting HR trend, training readiness score, stress-recovery correlation patterns, and sleep-performance correlation.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -155,7 +155,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_cardio_performance",
-            "description": "Get cardio performance metrics: running cadence trends, VO2 max progression, elevation summary, and aerobic/anaerobic training effect balance. Use when the user asks about running form, cardio fitness, VO2 max, elevation, or training effect.",
+            "description": "Get cardio performance metrics: running cadence trends, VO2 max progression, elevation summary, pacing consistency (CoV, negative-split percentage), and aerobic/anaerobic training effect balance. Use when the user asks about running form, pacing, cadence, VO2 max, elevation, or training effect.",
             "parameters": {
                 "type": "object",
                 "properties": {

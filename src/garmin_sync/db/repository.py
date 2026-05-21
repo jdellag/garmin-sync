@@ -7,12 +7,16 @@ from typing import Optional
 from garmin_sync.db.database import Database
 from garmin_sync.db.models import (
     Activity,
+    ActivityLap,
+    ActivitySplit,
     BodyBatteryDaily,
     ChatMessage,
     DailySummary,
     HeartRateDaily,
     HRVDaily,
+    RespirationDaily,
     SleepDaily,
+    SpO2Daily,
     StressDaily,
     SyncMetadata,
     TrainingReadiness,
@@ -186,8 +190,9 @@ class Repository:
                     training_effect_aerobic, training_effect_anaerobic,
                     training_load, vo2_max, avg_cadence, max_cadence,
                     average_power, max_power, normalized_power,
-                    device_name, has_fit_file, fit_file_path, hr_drift, raw_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    device_name, has_fit_file, fit_file_path, hr_drift, raw_json,
+                    fit_parsed, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(activity_id) DO UPDATE SET
                     activity_name = excluded.activity_name,
                     activity_type = excluded.activity_type,
@@ -198,6 +203,7 @@ class Repository:
                     calories = excluded.calories,
                     hr_drift = excluded.hr_drift,
                     raw_json = excluded.raw_json,
+                    fit_parsed = excluded.fit_parsed,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -232,6 +238,7 @@ class Repository:
                     activity.fit_file_path,
                     activity.hr_drift,
                     activity.raw_json,
+                    1 if activity.fit_parsed else 0,
                 )
             )
 
@@ -281,6 +288,7 @@ class Repository:
             fit_file_path=row["fit_file_path"],
             hr_drift=row["hr_drift"],
             raw_json=row["raw_json"],
+            fit_parsed=bool(row["fit_parsed"]),
         )
 
     # ==================== Existence Checks ====================
@@ -292,6 +300,8 @@ class Repository:
         "hrv_daily",
         "training_readiness",
         "body_battery_daily",
+        "respiration_daily",
+        "spo2_daily",
     })
 
     def has_daily_record(self, table: str, date_str: str) -> bool:
@@ -570,6 +580,218 @@ class Repository:
                     tr.training_load_balance_score,
                     tr.feedback_phrase,
                     tr.raw_json,
+                )
+            )
+
+    # ==================== Activity Laps ====================
+
+    def upsert_activity_laps(self, activity_id: str, laps: list[ActivityLap]) -> None:
+        """Replace all laps for an activity.
+
+        Args:
+            activity_id: Garmin activity ID
+            laps: List of ActivityLap models
+        """
+        with self.db.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM activity_laps WHERE activity_id = ?",
+                (activity_id,)
+            )
+            cursor.executemany(
+                """
+                INSERT INTO activity_laps (
+                    activity_id, lap_index, start_time,
+                    total_elapsed_time, total_distance,
+                    avg_speed, max_speed,
+                    avg_heart_rate, max_heart_rate,
+                    avg_cadence, avg_power,
+                    total_ascent, total_descent,
+                    avg_temperature
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        lap.activity_id,
+                        lap.lap_index,
+                        lap.start_time,
+                        lap.total_elapsed_time,
+                        lap.total_distance,
+                        lap.avg_speed,
+                        lap.max_speed,
+                        lap.avg_heart_rate,
+                        lap.max_heart_rate,
+                        lap.avg_cadence,
+                        lap.avg_power,
+                        lap.total_ascent,
+                        lap.total_descent,
+                        lap.avg_temperature,
+                    )
+                    for lap in laps
+                ],
+            )
+
+    def get_activity_laps(self, activity_id: str) -> list[dict]:
+        """Get all laps for an activity, ordered by lap_index.
+
+        Args:
+            activity_id: Garmin activity ID
+
+        Returns:
+            List of lap dicts
+        """
+        cursor = self.db.connection.cursor()
+        cursor.execute(
+            "SELECT * FROM activity_laps WHERE activity_id = ? ORDER BY lap_index",
+            (activity_id,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    # ==================== Activity Splits ====================
+
+    def upsert_activity_splits(self, activity_id: str, splits: list[ActivitySplit]) -> None:
+        """Replace all splits for an activity.
+
+        Args:
+            activity_id: Garmin activity ID
+            splits: List of ActivitySplit models
+        """
+        with self.db.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM activity_splits WHERE activity_id = ?",
+                (activity_id,)
+            )
+            cursor.executemany(
+                """
+                INSERT INTO activity_splits (
+                    activity_id, split_index, split_unit,
+                    distance, elapsed_time, pace_seconds_per_km,
+                    avg_heart_rate, avg_cadence, avg_power,
+                    elevation_change
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        split.activity_id,
+                        split.split_index,
+                        split.split_unit,
+                        split.distance,
+                        split.elapsed_time,
+                        split.pace_seconds_per_km,
+                        split.avg_heart_rate,
+                        split.avg_cadence,
+                        split.avg_power,
+                        split.elevation_change,
+                    )
+                    for split in splits
+                ],
+            )
+
+    def get_activity_splits(self, activity_id: str, unit: str = "km") -> list[dict]:
+        """Get all splits for an activity, ordered by split_index.
+
+        Args:
+            activity_id: Garmin activity ID
+            unit: Split unit filter (default 'km')
+
+        Returns:
+            List of split dicts
+        """
+        cursor = self.db.connection.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM activity_splits
+            WHERE activity_id = ? AND split_unit = ?
+            ORDER BY split_index
+            """,
+            (activity_id, unit)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    # ==================== FIT Parse Tracking ====================
+
+    def get_activities_needing_fit_parse(self) -> list[dict]:
+        """Get activities with FIT files that haven't been fully parsed.
+
+        Returns:
+            List of activity dicts where has_fit_file=1 and fit_parsed is 0 or NULL
+        """
+        cursor = self.db.connection.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM activities
+            WHERE has_fit_file = 1 AND (fit_parsed = 0 OR fit_parsed IS NULL)
+            ORDER BY start_time DESC
+            """
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def mark_activity_fit_parsed(self, activity_id: str) -> None:
+        """Mark an activity's FIT file as fully parsed.
+
+        Args:
+            activity_id: Garmin activity ID
+        """
+        with self.db.transaction() as cursor:
+            cursor.execute(
+                "UPDATE activities SET fit_parsed = 1 WHERE activity_id = ?",
+                (activity_id,)
+            )
+
+    # ==================== Respiration Daily ====================
+
+    def upsert_respiration_daily(self, data: RespirationDaily) -> None:
+        """Insert or update all-day respiration data.
+
+        Args:
+            data: RespirationDaily model
+        """
+        with self.db.transaction() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO respiration_daily (
+                    date, avg_respiration, max_respiration, min_respiration,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(date) DO UPDATE SET
+                    avg_respiration = excluded.avg_respiration,
+                    max_respiration = excluded.max_respiration,
+                    min_respiration = excluded.min_respiration,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    data.date,
+                    data.avg_respiration,
+                    data.max_respiration,
+                    data.min_respiration,
+                )
+            )
+
+    # ==================== SpO2 Daily ====================
+
+    def upsert_spo2_daily(self, data: SpO2Daily) -> None:
+        """Insert or update all-day SpO2 data.
+
+        Args:
+            data: SpO2Daily model
+        """
+        with self.db.transaction() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO spo2_daily (
+                    date, avg_spo2, min_spo2, max_spo2,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(date) DO UPDATE SET
+                    avg_spo2 = excluded.avg_spo2,
+                    min_spo2 = excluded.min_spo2,
+                    max_spo2 = excluded.max_spo2,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    data.date,
+                    data.avg_spo2,
+                    data.min_spo2,
+                    data.max_spo2,
                 )
             )
 

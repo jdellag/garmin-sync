@@ -40,6 +40,7 @@ class Activity:
     fit_file_path: Optional[str] = None
     hr_drift: Optional[float] = None  # (HR_half2 - HR_half1) / HR_half1
     raw_json: Optional[str] = None
+    fit_parsed: bool = False
 
     @classmethod
     def from_api_response(cls, data: dict) -> "Activity":
@@ -375,3 +376,81 @@ class ChatMessage:
     message_type: str = "chat"  # 'chat' or 'analysis'
     token_estimate: Optional[int] = None
     created_at: Optional[str] = None
+
+
+@dataclass
+class ActivityLap:
+    """Represents a single lap from FIT file parsing."""
+
+    activity_id: str
+    lap_index: int
+    start_time: Optional[str] = None
+    total_elapsed_time: Optional[float] = None
+    total_distance: Optional[float] = None
+    avg_speed: Optional[float] = None
+    max_speed: Optional[float] = None
+    avg_heart_rate: Optional[int] = None
+    max_heart_rate: Optional[int] = None
+    avg_cadence: Optional[float] = None
+    avg_power: Optional[float] = None
+    total_ascent: Optional[float] = None
+    total_descent: Optional[float] = None
+    avg_temperature: Optional[float] = None
+
+
+@dataclass
+class ActivitySplit:
+    """Represents a pre-computed pace split (per-km)."""
+
+    activity_id: str
+    split_index: int
+    split_unit: str = "km"
+    distance: float = 0.0
+    elapsed_time: float = 0.0
+    pace_seconds_per_km: Optional[float] = None
+    avg_heart_rate: Optional[int] = None
+    avg_cadence: Optional[float] = None
+    avg_power: Optional[float] = None
+    elevation_change: Optional[float] = None
+
+
+@dataclass
+class RespirationDaily:
+    """Daily all-day respiration data."""
+
+    date: str
+    avg_respiration: Optional[float] = None
+    max_respiration: Optional[float] = None
+    min_respiration: Optional[float] = None
+    raw_json: Optional[str] = None
+
+    @classmethod
+    def from_api_response(cls, date_str: str, data: dict) -> "RespirationDaily":
+        """Create from Garmin API response."""
+        return cls(
+            date=date_str,
+            avg_respiration=data.get("avgWakingRespirationValue"),
+            max_respiration=data.get("highestRespirationValue"),
+            min_respiration=data.get("lowestRespirationValue"),
+        )
+
+
+@dataclass
+class SpO2Daily:
+    """Daily all-day SpO2 data."""
+
+    date: str
+    avg_spo2: Optional[float] = None
+    min_spo2: Optional[float] = None
+    max_spo2: Optional[float] = None
+    raw_json: Optional[str] = None
+
+    @classmethod
+    def from_api_response(cls, date_str: str, data: dict) -> "SpO2Daily":
+        """Create from Garmin API response."""
+        return cls(
+            date=date_str,
+            avg_spo2=data.get("averageSpo2"),
+            min_spo2=data.get("lowestSpo2"),
+            max_spo2=data.get("latestSpo2"),
+        )

@@ -61,7 +61,8 @@ def get_recent_activities(
         activity_type: Filter by type (running, cycling, swimming, etc.)
         limit: Max results (default: 20)
 
-    Returns activities with: name, type, duration, distance, HR, training load, HR drift.
+    Returns activities with: name, type, duration, distance, HR, training load, HR drift,
+    and per-km pace splits (with pacing consistency and negative-split detection).
     """
     return _get_executor().get_recent_activities(
         days=days,
@@ -74,11 +75,10 @@ def get_recent_activities(
 def get_recovery_status() -> dict:
     """Get current recovery metrics for training decisions.
 
-    Returns HRV (baseline, delta, status), sleep (hours, score),
-    body battery (recovery), resting HR (trend), training readiness,
-    stress-recovery correlation patterns (training vs rest day stress,
-    high-stress-poor-recovery detection), and sleep-performance
-    correlation (personal A-F grading, HRV-performance link).
+    Returns HRV (baseline, delta, status), sleep (hours, score, all-day
+    respiration rate and SpO2), body battery (recovery), resting HR
+    (trend), training readiness, stress-recovery patterns, and
+    sleep-performance correlation.
     """
     return _get_executor().get_recovery_status()
 
@@ -175,13 +175,14 @@ def get_longitudinal_summary(
 @mcp.tool()
 def get_cardio_performance(days: int = 28) -> dict:
     """Get cardio performance metrics: running cadence trends, VO2 max
-    progression, elevation summary, and training effect balance.
+    progression, elevation summary, pacing consistency (CoV,
+    negative-split percentage), and training effect balance.
 
     Args:
         days: Number of days to analyze (default: 28)
 
     Returns:
-        Dict with cadence, vo2_max, elevation, and training_effect sections.
+        Dict with cadence, vo2_max, elevation, pacing, and training_effect sections.
     """
     return _get_executor().get_cardio_performance(days=days)
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Generator
 
 # Schema version for migrations
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS activities (
     fit_file_path TEXT,
     hr_drift REAL,
     raw_json TEXT,
+    fit_parsed INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -292,6 +293,70 @@ CREATE TABLE IF NOT EXISTS personal_records (
 );
 CREATE INDEX IF NOT EXISTS idx_personal_records_category ON personal_records(category);
 CREATE INDEX IF NOT EXISTS idx_personal_records_date ON personal_records(date_set);
+
+-- Activity laps from FIT file parsing
+CREATE TABLE IF NOT EXISTS activity_laps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id TEXT NOT NULL,
+    lap_index INTEGER NOT NULL,
+    start_time TEXT,
+    total_elapsed_time REAL,
+    total_distance REAL,
+    avg_speed REAL,
+    max_speed REAL,
+    avg_heart_rate INTEGER,
+    max_heart_rate INTEGER,
+    avg_cadence REAL,
+    avg_power REAL,
+    total_ascent REAL,
+    total_descent REAL,
+    avg_temperature REAL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(activity_id, lap_index)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_laps_activity ON activity_laps(activity_id);
+
+-- Activity pace splits (pre-computed per-km)
+CREATE TABLE IF NOT EXISTS activity_splits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id TEXT NOT NULL,
+    split_index INTEGER NOT NULL,
+    split_unit TEXT NOT NULL DEFAULT 'km',
+    distance REAL NOT NULL,
+    elapsed_time REAL NOT NULL,
+    pace_seconds_per_km REAL,
+    avg_heart_rate INTEGER,
+    avg_cadence REAL,
+    avg_power REAL,
+    elevation_change REAL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(activity_id, split_index, split_unit)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_splits_activity ON activity_splits(activity_id);
+
+-- All-day respiration data
+CREATE TABLE IF NOT EXISTS respiration_daily (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL UNIQUE,
+    avg_respiration REAL,
+    max_respiration REAL,
+    min_respiration REAL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_respiration_daily_date ON respiration_daily(date);
+
+-- All-day SpO2 data
+CREATE TABLE IF NOT EXISTS spo2_daily (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL UNIQUE,
+    avg_spo2 REAL,
+    min_spo2 REAL,
+    max_spo2 REAL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_spo2_daily_date ON spo2_daily(date);
 """
 
 
@@ -404,6 +469,9 @@ class Database:
 
         if current_version < 5:
             self._migrate_v4_to_v5()
+
+        if current_version < 6:
+            self._migrate_v5_to_v6()
 
     def _migrate_v1_to_v2(self) -> None:
         """Add hr_drift column to activities table."""
@@ -572,5 +640,110 @@ class Database:
         cursor.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
             (5,)
+        )
+        self.connection.commit()
+
+    def _migrate_v5_to_v6(self) -> None:
+        """Add activity_laps, activity_splits, respiration_daily, spo2_daily tables
+        and fit_parsed column on activities."""
+        cursor = self.connection.cursor()
+
+        # Create activity_laps table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS activity_laps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                activity_id TEXT NOT NULL,
+                lap_index INTEGER NOT NULL,
+                start_time TEXT,
+                total_elapsed_time REAL,
+                total_distance REAL,
+                avg_speed REAL,
+                max_speed REAL,
+                avg_heart_rate INTEGER,
+                max_heart_rate INTEGER,
+                avg_cadence REAL,
+                avg_power REAL,
+                total_ascent REAL,
+                total_descent REAL,
+                avg_temperature REAL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(activity_id, lap_index)
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_activity_laps_activity "
+            "ON activity_laps(activity_id)"
+        )
+
+        # Create activity_splits table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS activity_splits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                activity_id TEXT NOT NULL,
+                split_index INTEGER NOT NULL,
+                split_unit TEXT NOT NULL DEFAULT 'km',
+                distance REAL NOT NULL,
+                elapsed_time REAL NOT NULL,
+                pace_seconds_per_km REAL,
+                avg_heart_rate INTEGER,
+                avg_cadence REAL,
+                avg_power REAL,
+                elevation_change REAL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(activity_id, split_index, split_unit)
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_activity_splits_activity "
+            "ON activity_splits(activity_id)"
+        )
+
+        # Create respiration_daily table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS respiration_daily (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL UNIQUE,
+                avg_respiration REAL,
+                max_respiration REAL,
+                min_respiration REAL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_respiration_daily_date "
+            "ON respiration_daily(date)"
+        )
+
+        # Create spo2_daily table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS spo2_daily (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL UNIQUE,
+                avg_spo2 REAL,
+                min_spo2 REAL,
+                max_spo2 REAL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_spo2_daily_date "
+            "ON spo2_daily(date)"
+        )
+
+        # Add fit_parsed column to activities if it doesn't exist
+        cursor.execute("PRAGMA table_info(activities)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "fit_parsed" not in columns:
+            cursor.execute(
+                "ALTER TABLE activities ADD COLUMN fit_parsed INTEGER DEFAULT 0"
+            )
+
+        # Update schema version
+        cursor.execute(
+            "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
+            (6,)
         )
         self.connection.commit()

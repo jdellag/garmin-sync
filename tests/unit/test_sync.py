@@ -9,8 +9,18 @@ import pytest
 
 from garmin_sync.db.database import Database
 from garmin_sync.db.repository import Repository
-from garmin_sync.sync.sync_manager import SyncManager, SyncResult, HR_DRIFT_ACTIVITY_TYPES, HR_DRIFT_MIN_DURATION
-from garmin_sync.sync.fit_parser import compute_hr_drift_from_fit, extract_hr_samples
+from garmin_sync.sync.sync_manager import (
+    SyncManager,
+    SyncResult,
+    HR_DRIFT_ACTIVITY_TYPES,
+    HR_DRIFT_MIN_DURATION,
+    FIT_PARSE_MIN_DURATION,
+)
+from garmin_sync.sync.fit_parser import (
+    compute_hr_drift_from_fit,
+    extract_hr_samples,
+    FitParseResult,
+)
 
 
 class TestSyncResult:
@@ -556,23 +566,24 @@ class TestSyncManagerHRDrift:
         assert HR_DRIFT_MIN_DURATION == 1200
 
     @patch("garmin_sync.sync.sync_manager.get_settings")
-    @patch("garmin_sync.sync.sync_manager.compute_hr_drift_from_fit")
+    @patch("garmin_sync.sync.sync_manager.parse_fit_full")
     def test_sync_activities_computes_hr_drift_for_qualifying(
-        self, mock_compute, mock_settings, sync_manager, mock_client, temp_dir
+        self, mock_parse, mock_settings, sync_manager, mock_client, temp_dir
     ):
-        """HR drift is computed for qualifying activities."""
+        """HR drift is computed via full FIT parse for qualifying activities."""
         # Setup settings mock
         mock_settings_obj = MagicMock()
         mock_settings_obj.fit_files_dir = temp_dir / "fit_files"
+        mock_settings_obj.download_fit_files = True
         mock_settings.return_value = mock_settings_obj
 
-        # Setup compute mock
-        mock_compute.return_value = 0.05
+        # Setup parse_fit_full mock
+        mock_parse.return_value = FitParseResult(laps=[], splits=[], hr_drift=0.05)
 
         # Setup FIT download
         mock_client.download_activity_fit.return_value = b"mock_fit_data"
 
-        # Activity that qualifies: running, >20min, has HR
+        # Activity that qualifies: running, >5min, has HR
         mock_client.get_activities_by_date.return_value = [
             {
                 "activityId": "12345",
@@ -595,29 +606,31 @@ class TestSyncManagerHRDrift:
         # Verify FIT was downloaded
         mock_client.download_activity_fit.assert_called_once_with("12345")
 
-        # Verify activity has HR drift
+        # Verify activity has HR drift and fit_parsed flag
         repo = Repository(sync_manager.db)
         activity = repo.get_activity("12345")
         assert activity.hr_drift == pytest.approx(0.05)
         assert activity.has_fit_file is True
+        assert activity.fit_parsed is True
 
     @patch("garmin_sync.sync.sync_manager.get_settings")
-    def test_sync_activities_skips_hr_drift_for_short_activities(
+    def test_sync_activities_skips_fit_parse_for_short_activities(
         self, mock_settings, sync_manager, mock_client, temp_dir
     ):
-        """HR drift is not computed for activities shorter than 20 minutes."""
+        """FIT files are not downloaded for activities shorter than 5 minutes."""
         mock_settings_obj = MagicMock()
         mock_settings_obj.fit_files_dir = temp_dir / "fit_files"
+        mock_settings_obj.download_fit_files = True
         mock_settings.return_value = mock_settings_obj
 
-        # Activity too short (< 20 min)
+        # Activity too short (< 5 min / FIT_PARSE_MIN_DURATION)
         mock_client.get_activities_by_date.return_value = [
             {
                 "activityId": "12345",
                 "activityName": "Short Run",
                 "activityType": {"typeKey": "running"},
                 "startTimeGMT": "2024-01-15T07:00:00.0",
-                "duration": 600.0,  # 10 minutes
+                "duration": 240.0,  # 4 minutes — below threshold
                 "averageHR": 145,
             },
         ]
@@ -633,17 +646,23 @@ class TestSyncManagerHRDrift:
         repo = Repository(sync_manager.db)
         activity = repo.get_activity("12345")
         assert activity.hr_drift is None
+        assert activity.fit_parsed is False
 
     @patch("garmin_sync.sync.sync_manager.get_settings")
-    def test_sync_activities_skips_hr_drift_for_non_qualifying_type(
-        self, mock_settings, sync_manager, mock_client, temp_dir
+    @patch("garmin_sync.sync.sync_manager.parse_fit_full")
+    def test_sync_activities_parses_fit_for_all_activity_types(
+        self, mock_parse, mock_settings, sync_manager, mock_client, temp_dir
     ):
-        """HR drift is not computed for non-qualifying activity types."""
+        """FIT files are parsed for all activity types (not just running)."""
         mock_settings_obj = MagicMock()
         mock_settings_obj.fit_files_dir = temp_dir / "fit_files"
+        mock_settings_obj.download_fit_files = True
         mock_settings.return_value = mock_settings_obj
 
-        # Strength training doesn't qualify
+        mock_parse.return_value = FitParseResult(laps=[], splits=[], hr_drift=None)
+        mock_client.download_activity_fit.return_value = b"mock_fit_data"
+
+        # Strength training now gets FIT parsed (for laps/splits)
         mock_client.get_activities_by_date.return_value = [
             {
                 "activityId": "12345",
@@ -660,23 +679,29 @@ class TestSyncManagerHRDrift:
             end_date=date(2024, 1, 15),
         )
 
-        # FIT should NOT be downloaded for strength training
-        mock_client.download_activity_fit.assert_not_called()
+        # FIT IS now downloaded for all activity types >= 5 min
+        mock_client.download_activity_fit.assert_called_once_with("12345")
 
         repo = Repository(sync_manager.db)
         activity = repo.get_activity("12345")
-        assert activity.hr_drift is None
+        assert activity.has_fit_file is True
+        assert activity.fit_parsed is True
 
     @patch("garmin_sync.sync.sync_manager.get_settings")
-    def test_sync_activities_skips_hr_drift_for_no_hr(
-        self, mock_settings, sync_manager, mock_client, temp_dir
+    @patch("garmin_sync.sync.sync_manager.parse_fit_full")
+    def test_sync_activities_parses_fit_even_without_hr(
+        self, mock_parse, mock_settings, sync_manager, mock_client, temp_dir
     ):
-        """HR drift is not computed for activities without HR data."""
+        """FIT files are parsed even for activities without HR data (for laps/splits)."""
         mock_settings_obj = MagicMock()
         mock_settings_obj.fit_files_dir = temp_dir / "fit_files"
+        mock_settings_obj.download_fit_files = True
         mock_settings.return_value = mock_settings_obj
 
-        # No averageHR field
+        mock_parse.return_value = FitParseResult(laps=[], splits=[], hr_drift=None)
+        mock_client.download_activity_fit.return_value = b"mock_fit_data"
+
+        # No averageHR field — FIT is still downloaded for laps/splits
         mock_client.get_activities_by_date.return_value = [
             {
                 "activityId": "12345",
@@ -692,7 +717,12 @@ class TestSyncManagerHRDrift:
             end_date=date(2024, 1, 15),
         )
 
-        mock_client.download_activity_fit.assert_not_called()
+        mock_client.download_activity_fit.assert_called_once_with("12345")
+
+        repo = Repository(sync_manager.db)
+        activity = repo.get_activity("12345")
+        assert activity.has_fit_file is True
+        assert activity.hr_drift is None  # No HR data in FIT
 
     @patch("garmin_sync.sync.sync_manager.get_settings")
     def test_sync_activities_handles_fit_download_error(
@@ -701,6 +731,7 @@ class TestSyncManagerHRDrift:
         """Activity sync continues if FIT download fails."""
         mock_settings_obj = MagicMock()
         mock_settings_obj.fit_files_dir = temp_dir / "fit_files"
+        mock_settings_obj.download_fit_files = True
         mock_settings.return_value = mock_settings_obj
 
         # FIT download fails
@@ -732,9 +763,8 @@ class TestSyncManagerHRDrift:
         assert activity.hr_drift is None
 
     @patch("garmin_sync.sync.sync_manager.get_settings")
-    @patch("garmin_sync.sync.sync_manager.compute_hr_drift_from_fit")
     def test_download_and_store_fit_caches(
-        self, mock_compute, mock_settings, sync_manager, mock_client, temp_dir
+        self, mock_settings, sync_manager, mock_client, temp_dir
     ):
         """FIT file is stored and reused on subsequent calls."""
         fit_dir = temp_dir / "fit_files"
@@ -743,7 +773,6 @@ class TestSyncManagerHRDrift:
         mock_settings.return_value = mock_settings_obj
 
         mock_client.download_activity_fit.return_value = b"mock_fit_data"
-        mock_compute.return_value = 0.05
 
         # First call should download
         path1 = sync_manager._download_and_store_fit("12345")
