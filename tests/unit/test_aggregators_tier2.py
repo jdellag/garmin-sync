@@ -606,12 +606,23 @@ class TestCardioActivityPRDetection:
         prs = agg.detect_activity_prs("run_5k")
         metric_names = [p["metric_name"] for p in prs]
         assert "fastest_5k" in metric_names
+        # run_5k (5000m) should NOT get longest_run — run_long (20000m) is longer
+        assert "longest_run" not in metric_names
+
+    def test_detect_longest_run(self, agg, repo):
+        """The longest run in the DB should get the PR, not a shorter one."""
+        prs = agg.detect_activity_prs("run_long")
+        metric_names = [p["metric_name"] for p in prs]
         assert "longest_run" in metric_names
 
     def test_detect_highest_training_load(self, agg, repo):
-        # First activity
-        agg.detect_activity_prs("run_5k")
-        # Second activity has higher load
+        """Only the activity with the actual highest load gets the PR."""
+        # run_5k has training_load=60, run_long has 120.
+        # run_5k should NOT get it — run_long is higher.
+        prs_5k = agg.detect_activity_prs("run_5k")
+        assert "highest_training_load" not in [p["metric_name"] for p in prs_5k]
+
+        # run_long has the actual highest load
         prs = agg.detect_activity_prs("run_long")
         metric_names = [p["metric_name"] for p in prs]
         assert "highest_training_load" in metric_names
