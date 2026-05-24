@@ -61,5 +61,5 @@ profile.toml
 # FIT files (personal health data)
 *.fit
 
-# Analysis reports (personal health data)
-reports/
+# Analysis reports (personal health data — generated at runtime, not in repo)
+/reports/
