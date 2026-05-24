@@ -251,6 +251,22 @@ class SyncManager:
                 except Exception as e:
                     result.add_error(f"Activity {activity_id}: {e}")
 
+            # If the personal_records table is empty or sparse, backfill from
+            # all historical activities so PRs are correct even for data that
+            # was synced before PR tracking existed.
+            try:
+                if self._pr_aggregator is None:
+                    from garmin_sync.reports.aggregators import DataAggregator
+                    self._pr_aggregator = DataAggregator(self.db)
+
+                cursor = self.db.connection.cursor()
+                cursor.execute("SELECT COUNT(*) AS n FROM personal_records")
+                pr_count = cursor.fetchone()["n"]
+                if pr_count == 0 and result.records_synced > 0:
+                    self._pr_aggregator.backfill_cardio_prs()
+            except Exception:
+                pass  # Backfill is non-critical
+
             # Update sync metadata
             self._update_sync_metadata("activities", result)
 

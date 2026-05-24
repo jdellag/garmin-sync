@@ -563,6 +563,52 @@ class DataAggregator:
 
         return result
 
+    def get_sleep_score_history(
+        self, end_date: date, days: int = 14
+    ) -> dict:
+        """Return per-night sleep scores with personal mean and stddev.
+
+        Used by anomaly detection to check for consecutive low-score nights.
+
+        Args:
+            end_date: End date (inclusive)
+            days: Number of days to look back
+
+        Returns:
+            Dict with scores list, mean, and std.
+        """
+        import statistics
+
+        cursor = self.db.connection.cursor()
+        start = (end_date - timedelta(days=days - 1)).isoformat()
+        ed = end_date.isoformat()
+
+        cursor.execute(
+            """
+            SELECT date, sleep_score
+            FROM sleep_daily
+            WHERE date BETWEEN ? AND ?
+                AND sleep_score IS NOT NULL
+            ORDER BY date ASC
+            """,
+            (start, ed),
+        )
+        rows = cursor.fetchall()
+        scores = [{"date": r["date"], "score": r["sleep_score"]} for r in rows]
+        values = [r["sleep_score"] for r in rows]
+
+        if len(values) >= 2:
+            mean = statistics.mean(values)
+            std = statistics.stdev(values)
+        elif len(values) == 1:
+            mean = values[0]
+            std = 0.0
+        else:
+            mean = 0.0
+            std = 0.0
+
+        return {"scores": scores, "mean": round(mean, 1), "std": round(std, 1)}
+
     def get_training_load_trend(self, end_date: date) -> dict:
         """Calculate training load trends and acute:chronic ratio.
 
@@ -730,6 +776,52 @@ class DataAggregator:
             })
 
         return result
+
+    def get_weekly_load_history(
+        self, end_date: date, weeks: int = 6
+    ) -> dict:
+        """Return per-week training load totals for phase detection.
+
+        Args:
+            end_date: End date (inclusive)
+            weeks: Number of weeks to look back
+
+        Returns:
+            Dict with a ``weeks`` list (oldest first) containing
+            week_start, total_load, count, and avg_hr per ISO week.
+        """
+        cursor = self.db.connection.cursor()
+        start = end_date - timedelta(weeks=weeks)
+        sd = start.isoformat()
+        ed = end_date.isoformat()
+
+        cursor.execute(
+            """
+            SELECT strftime('%%Y-%%W', start_time_local) AS yw,
+                   MIN(date(start_time_local)) AS week_start,
+                   SUM(COALESCE(training_load, 0)) AS total_load,
+                   COUNT(*) AS count,
+                   AVG(average_hr) AS avg_hr
+            FROM activities
+            WHERE date(start_time_local) BETWEEN ? AND ?
+            GROUP BY yw
+            ORDER BY yw ASC
+            """,
+            (sd, ed),
+        )
+        rows = cursor.fetchall()
+
+        week_list = [
+            {
+                "week_start": r["week_start"],
+                "total_load": round(r["total_load"], 1),
+                "count": r["count"],
+                "avg_hr": round(r["avg_hr"], 1) if r["avg_hr"] else None,
+            }
+            for r in rows
+        ]
+
+        return {"weeks": week_list}
 
     def get_resting_hr_trend(self, end_date: date) -> dict:
         """Calculate resting heart rate trends.
@@ -2772,12 +2864,19 @@ class DataAggregator:
             end_date = end_date.isoformat()
 
         cursor = self.db.connection.cursor()
+
+        # Check if fit_parsed column exists (added in migration v5→v6).
+        cursor.execute("PRAGMA table_info(activities)")
+        columns = {row[1] for row in cursor.fetchall()}
+        has_fit_parsed = "fit_parsed" in columns
+
+        fit_filter = "AND a.fit_parsed = 1" if has_fit_parsed else ""
         cursor.execute(
-            """
+            f"""
             SELECT a.activity_id, a.activity_type, a.start_time_local, a.distance_meters
             FROM activities a
             WHERE a.start_time_local >= ? AND a.start_time_local <= ?
-              AND a.fit_parsed = 1
+              {fit_filter}
             ORDER BY a.start_time_local
             """,
             (start_date, end_date + "T23:59:59"),

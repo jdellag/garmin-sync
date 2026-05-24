@@ -19,7 +19,7 @@ class TestToolDefinitions:
     def test_tools_is_list(self):
         """Test that TOOLS is a non-empty list."""
         assert isinstance(TOOLS, list)
-        assert len(TOOLS) == 10
+        assert len(TOOLS) == 12
 
     def test_all_tools_have_required_structure(self):
         """Test that all tools have correct OpenAI function schema structure."""
@@ -35,7 +35,7 @@ class TestToolDefinitions:
     def test_tool_names_match(self):
         """Test that get_tool_names returns correct names."""
         names = get_tool_names()
-        assert len(names) == 10
+        assert len(names) == 12
         assert "get_recent_activities" in names
         assert "get_recovery_status" in names
         assert "get_training_load_analysis" in names
@@ -45,6 +45,8 @@ class TestToolDefinitions:
         assert "get_weekly_comparison" in names
         assert "get_cardio_performance" in names
         assert "get_longitudinal_summary" in names
+        assert "get_anomaly_report" in names
+        assert "get_periodization_status" in names
         assert "sync_garmin_data" in names
 
     def test_get_exercise_progression_has_required_param(self):
@@ -494,9 +496,9 @@ class TestChatSessionWithTools:
 
         assert "tools_enabled" in ctx
         assert "tool_count" in ctx
-        # bumped to 10 after adding get_cardio_performance
+        # bumped to 12 after adding anomaly_report + periodization_status
         assert ctx["tools_enabled"] is True
-        assert ctx["tool_count"] == 10
+        assert ctx["tool_count"] == 12
 
     def test_context_summary_tools_disabled(self, session):
         """Test context summary when tools are disabled."""

@@ -35,7 +35,7 @@ class TestLaunchdModule:
         command = plist["ProgramArguments"][2]
         assert "sync all --days 1 --detailed" in command
         assert "analyze" in command
-        assert "osascript" in command  # notification
+        assert "post-sync-check" in command  # notification via anomaly check
         assert "open" in command  # open report
         assert plist["RunAtLoad"] is False
         assert plist["StandardOutPath"] == str(log_dir / "sync.log")

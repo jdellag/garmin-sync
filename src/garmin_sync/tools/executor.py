@@ -106,7 +106,7 @@ class ToolExecutor:
         readiness_out = dict(readiness)
         readiness_out["weakest_component"] = weakest
 
-        return {
+        result = {
             "hrv": {
                 "baseline_7d": hrv.get("baseline_7d"),
                 "last_night": hrv.get("last_night"),
@@ -158,6 +158,19 @@ class ToolExecutor:
             },
             "last_sync": self.repo.get_latest_sync_timestamp(),
         }
+
+        # Enrich with anomaly detection
+        try:
+            from garmin_sync.reports.anomaly_detector import AnomalyDetector
+
+            detector = AnomalyDetector(self.repo.db)
+            anomalies = detector.detect_anomalies()
+            if anomalies:
+                result["anomalies"] = anomalies
+        except Exception:
+            pass
+
+        return result
 
     def get_training_load_analysis(self) -> dict:
         """Analyze training load for injury prevention.
@@ -457,6 +470,40 @@ class ToolExecutor:
             }
 
         return result
+
+    def get_anomaly_report(self) -> dict:
+        """Scan recent health and training data for anomalies.
+
+        Returns:
+            Dict with anomaly list (sorted by severity) and summary
+            counts per severity level.
+        """
+        from garmin_sync.reports.anomaly_detector import AnomalyDetector
+
+        detector = AnomalyDetector(self.repo.db)
+        anomalies = detector.detect_anomalies()
+
+        summary = {"critical": 0, "warning": 0, "info": 0}
+        for a in anomalies:
+            summary[a["severity"]] = summary.get(a["severity"], 0) + 1
+
+        return {
+            "anomalies": anomalies,
+            "summary": summary,
+            "total": len(anomalies),
+        }
+
+    def get_periodization_status(self) -> dict:
+        """Get current training phase, readiness score, and deload recommendation.
+
+        Returns:
+            Dict with ``phase``, ``readiness`` (0-100 composite score with
+            traffic-light signal), and ``deload`` recommendation.
+        """
+        from garmin_sync.reports.periodization import PeriodizationAnalyzer
+
+        analyzer = PeriodizationAnalyzer(self.repo.db)
+        return analyzer.get_periodization_summary()
 
     def sync_garmin_data(self, days: int = 1) -> dict:
         """Sync latest data from Garmin Connect (and HEVY if configured).

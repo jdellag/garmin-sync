@@ -236,6 +236,20 @@ def build_analysis_prompt(
 
             prompt_parts.append("")
 
+    # Add anomaly alerts if present in the detailed data
+    anomalies = detailed_7d.get("anomalies", [])
+    if anomalies:
+        prompt_parts.extend([
+            "## Health & Training Alerts",
+            "The following anomalies were detected from recent data:",
+            "",
+        ])
+        for a in anomalies:
+            severity = a.get("severity", "info").upper()
+            message = a.get("message", "")
+            prompt_parts.append(f"- **[{severity}]** {message}")
+        prompt_parts.extend(["", "Address these in your analysis.", ""])
+
     prompt_parts.extend([
         "## Instructions",
         f"Today is {day_of_week}. Based on the data above:",
@@ -540,6 +554,7 @@ def generate_detailed_7d(
         "daily_training_load": training_load.get("daily", []),
         "top_activities": activities.get("top_sessions", []),
         "alerts": weekly_json.get("alerts", []),
+        "anomalies": weekly_json.get("anomalies", []),
     }
 
     # Add personal records if any were set this week

@@ -55,7 +55,7 @@ def generate_plist(
         f'echo "$(date): Starting daily sync..."; '
         f'{gs_q} sync all --days 1 --detailed && '
         f'{gs_q} analyze && '
-        f'(osascript -e \'display notification "Your daily fitness analysis is ready" with title "Garmin Sync" sound name "Glass"\' || true) && '
+        f'{gs_q} analyze post-sync-check && '
         f'open "$REPORT"'
     )
 

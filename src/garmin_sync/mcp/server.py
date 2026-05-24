@@ -188,6 +188,30 @@ def get_cardio_performance(days: int = 28) -> dict:
 
 
 @mcp.tool()
+def get_anomaly_report() -> dict:
+    """Scan recent health and training data for anomalies.
+
+    Checks HRV crashes, RHR spikes, training overload/detraining, sleep
+    degradation, body battery depletion, stress-recovery imbalance,
+    overreaching, and SpO2 concerns.  Returns anomalies sorted by
+    severity (critical first) with summary counts.
+    """
+    return _get_executor().get_anomaly_report()
+
+
+@mcp.tool()
+def get_periodization_status() -> dict:
+    """Get current training phase, readiness score, and deload recommendation.
+
+    Returns training phase (recovery / base / build / peak / overload),
+    composite readiness score (0-100 with green/yellow/red signal from
+    HRV, sleep, body battery, RHR, and A:C ratio), and whether a deload
+    week is recommended.
+    """
+    return _get_executor().get_periodization_status()
+
+
+@mcp.tool()
 def sync_garmin_data(days: int = 1) -> dict:
     """Sync latest data from Garmin Connect (and HEVY if configured).
 

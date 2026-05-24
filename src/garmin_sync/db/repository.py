@@ -288,7 +288,7 @@ class Repository:
             fit_file_path=row["fit_file_path"],
             hr_drift=row["hr_drift"],
             raw_json=row["raw_json"],
-            fit_parsed=bool(row["fit_parsed"]),
+            fit_parsed=bool(row["fit_parsed"]) if "fit_parsed" in row.keys() else False,
         )
 
     # ==================== Existence Checks ====================

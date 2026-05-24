@@ -405,15 +405,31 @@ class Database:
             self._connection = None
 
     def initialize(self) -> None:
-        """Initialize database schema."""
+        """Initialize database schema.
+
+        For brand-new databases the full ``SCHEMA_SQL`` is applied and the
+        current ``SCHEMA_VERSION`` is recorded.  For existing databases the
+        ``CREATE TABLE IF NOT EXISTS`` statements are no-ops and version
+        advancement is left to :meth:`migrate` so that migrations are not
+        skipped.
+        """
         cursor = self.connection.cursor()
+
+        # Detect whether this is a fresh database (no tables yet).
+        cursor.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'"
+        )
+        is_new_db = cursor.fetchone()[0] == 0
+
         cursor.executescript(SCHEMA_SQL)
 
-        # Record schema version if not already present
-        cursor.execute(
-            "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
-            (SCHEMA_VERSION,)
-        )
+        if is_new_db:
+            # Fresh DB — all tables were just created with the latest
+            # schema, so record the current version to skip migrations.
+            cursor.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
+                (SCHEMA_VERSION,)
+            )
         self.connection.commit()
 
     def get_schema_version(self) -> int | None:
@@ -455,7 +471,13 @@ class Database:
         return [row[0] for row in cursor.fetchall()]
 
     def migrate(self) -> None:
-        """Run any pending migrations."""
+        """Run any pending migrations.
+
+        Also applies a one-time fixup for databases where
+        ``initialize()`` previously recorded version 6 before
+        the v5→v6 migration could run (the ``fit_parsed`` column
+        and new tables were therefore skipped).
+        """
         current_version = self.get_schema_version() or 0
 
         if current_version < 2:
@@ -472,6 +494,17 @@ class Database:
 
         if current_version < 6:
             self._migrate_v5_to_v6()
+
+        # Safety net: if version was recorded as 6 by a previous
+        # initialize() call but the v5→v6 migration never actually
+        # ran, the fit_parsed column will be missing.  The migration
+        # is idempotent, so re-running it is safe.
+        if current_version >= 6:
+            cursor = self.connection.cursor()
+            cursor.execute("PRAGMA table_info(activities)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "fit_parsed" not in columns:
+                self._migrate_v5_to_v6()
 
     def _migrate_v1_to_v2(self) -> None:
         """Add hr_drift column to activities table."""

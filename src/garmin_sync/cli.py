@@ -484,6 +484,31 @@ def sync_fit_reparse(
         raise typer.Exit(1)
 
 
+@sync_app.command("backfill-prs")
+def sync_backfill_prs():
+    """Re-scan all activities to set correct personal records.
+
+    Fixes PRs for activities that were synced before PR tracking existed.
+    Safe to run multiple times — only updates if a better record is found.
+    """
+    from garmin_sync.reports.aggregators import DataAggregator
+
+    db = _get_database()
+    agg = DataAggregator(db)
+
+    with console.status("Scanning all activities for personal records..."):
+        results = agg.backfill_cardio_prs()
+
+    if results:
+        console.print(f"[green]Set {len(results)} personal record(s):[/green]")
+        for pr in results:
+            prev = pr.get("previous_value")
+            prev_str = f" (was {prev})" if prev is not None else " (new)"
+            console.print(f"  {pr['metric_name']}: {pr['value']}{prev_str}  [{pr['date_set']}]")
+    else:
+        console.print("[dim]All personal records already correct.[/dim]")
+
+
 # ==================== Report Commands ====================
 
 def _get_report_generator():
@@ -655,6 +680,34 @@ def stats_week_cmd():
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
+
+
+@stats_app.command("readiness")
+def stats_readiness_cmd():
+    """Show one-line readiness score with training phase."""
+    from garmin_sync.db.database import Database
+    from garmin_sync.reports.periodization import PeriodizationAnalyzer
+
+    settings = get_settings()
+    db = Database(settings.database_path)
+    db.initialize()
+    db.migrate()
+
+    analyzer = PeriodizationAnalyzer(db)
+    summary = analyzer.get_periodization_summary()
+
+    readiness = summary["readiness"]
+    phase = summary["phase"]
+    score = readiness["score"]
+    signal = readiness["signal"]
+
+    signal_colors = {"green": "green", "yellow": "yellow", "red": "red"}
+    color = signal_colors.get(signal, "white")
+
+    console.print(
+        f"Readiness: [{color}]{score}/100 ({signal.title()})[/{color}]"
+        f" — {phase['phase'].title()} phase"
+    )
 
 
 # ==================== Schedule Commands ====================
@@ -1334,6 +1387,168 @@ def analyze_list(
         console.print(f"\n[dim]Showing {limit} of {len(reports)} reports[/dim]")
 
 
+@analyze_app.command("anomalies")
+def analyze_anomalies_cmd():
+    """Detect health and training anomalies from recent data."""
+    from garmin_sync.db.database import Database
+    from garmin_sync.reports.anomaly_detector import AnomalyDetector
+
+    settings = get_settings()
+    db = Database(settings.database_path)
+    db.initialize()
+    db.migrate()
+
+    detector = AnomalyDetector(db)
+    anomalies = detector.detect_anomalies()
+
+    if not anomalies:
+        console.print("[green]No anomalies detected — all metrics within normal ranges.[/green]")
+        return
+
+    severity_styles = {
+        "critical": ("red", "CRITICAL"),
+        "warning": ("yellow", "WARNING"),
+        "info": ("blue", "INFO"),
+    }
+
+    table = Table(title="Health & Training Anomalies", show_lines=True)
+    table.add_column("Severity", style="bold", width=10)
+    table.add_column("Check", width=22)
+    table.add_column("Details")
+
+    for a in anomalies:
+        sev = a["severity"]
+        color, label = severity_styles.get(sev, ("white", sev.upper()))
+        table.add_row(
+            f"[{color}]{label}[/{color}]",
+            a["check"].replace("_", " ").title(),
+            a["message"],
+        )
+
+    console.print(table)
+
+    counts = {"critical": 0, "warning": 0, "info": 0}
+    for a in anomalies:
+        counts[a["severity"]] = counts.get(a["severity"], 0) + 1
+    console.print(
+        f"\n[bold]{len(anomalies)} anomalies:[/bold] "
+        f"[red]{counts['critical']} critical[/red], "
+        f"[yellow]{counts['warning']} warnings[/yellow], "
+        f"[blue]{counts['info']} info[/blue]"
+    )
+
+
+@analyze_app.command("periodization")
+def analyze_periodization_cmd():
+    """Show training phase, readiness score, and deload recommendation."""
+    from rich.panel import Panel
+
+    from garmin_sync.db.database import Database
+    from garmin_sync.reports.periodization import PeriodizationAnalyzer
+
+    settings = get_settings()
+    db = Database(settings.database_path)
+    db.initialize()
+    db.migrate()
+
+    analyzer = PeriodizationAnalyzer(db)
+    summary = analyzer.get_periodization_summary()
+
+    # --- Phase panel ---
+    phase = summary["phase"]
+    phase_name = phase["phase"].title()
+    console.print(Panel(
+        f"[bold]{phase_name}[/bold]\n{phase['description']}",
+        title="Training Phase",
+        border_style="cyan",
+    ))
+
+    # --- Readiness score with component breakdown ---
+    readiness = summary["readiness"]
+    score = readiness["score"]
+    signal = readiness["signal"]
+    signal_colors = {"green": "green", "yellow": "yellow", "red": "red"}
+    color = signal_colors.get(signal, "white")
+
+    table = Table(title=f"Readiness Score: [{color}]{score}/100 ({signal.title()})[/{color}]")
+    table.add_column("Component", style="bold")
+    table.add_column("Score", justify="right")
+    table.add_column("Max", justify="right")
+    table.add_column("Detail")
+
+    for name, comp in readiness.get("components", {}).items():
+        table.add_row(
+            name.replace("_", " ").title(),
+            str(comp["score"]),
+            str(comp["max"]),
+            comp.get("detail", "insufficient data"),
+        )
+
+    console.print(table)
+
+    # --- Deload recommendation ---
+    deload = summary["deload"]
+    if deload["recommended"]:
+        console.print(Panel(
+            f"[bold yellow]Deload recommended[/bold yellow]\n"
+            f"{deload['reason']}\n"
+            f"Suggested volume: {deload['suggested_volume_pct']}% of normal",
+            title="Deload",
+            border_style="yellow",
+        ))
+    else:
+        console.print("\n[green]No deload needed at this time.[/green]")
+
+
+@analyze_app.command("post-sync-check", hidden=True)
+def analyze_post_sync_check_cmd():
+    """Run anomaly check and emit macOS notification (post-sync hook)."""
+    import platform
+    import subprocess
+
+    from garmin_sync.db.database import Database
+    from garmin_sync.reports.anomaly_detector import AnomalyDetector
+
+    settings = get_settings()
+    db = Database(settings.database_path)
+    db.initialize()
+    db.migrate()
+
+    detector = AnomalyDetector(db)
+    anomalies = detector.detect_anomalies()
+
+    critical = [a for a in anomalies if a["severity"] == "critical"]
+    warnings_list = [a for a in anomalies if a["severity"] == "warning"]
+
+    if critical:
+        title = "garmin-sync: Critical Alert"
+        body = critical[0]["message"]
+        sound = "Basso"
+    elif warnings_list:
+        title = "garmin-sync: Warning"
+        body = warnings_list[0]["message"]
+        sound = "Glass"
+    else:
+        title = "garmin-sync: Sync Complete"
+        body = "All metrics within normal ranges."
+        sound = "default"
+
+    if platform.system() == "Darwin":
+        # Escape double quotes to prevent AppleScript syntax errors.
+        safe_body = body.replace('"', '\\"')
+        safe_title = title.replace('"', '\\"')
+        script = (
+            f'display notification "{safe_body}" '
+            f'with title "{safe_title}" '
+            f'sound name "{sound}"'
+        )
+        subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            timeout=10,
+        )
+
+
 @analyze_app.command("chat")
 def analyze_chat():
     """Start interactive chat with AI coach."""
@@ -1697,15 +1912,18 @@ def mcp_info():
     """Show available MCP tools."""
     console.print("[bold]garmin-sync MCP Server[/bold]\n")
     console.print("Tools:")
-    console.print("  get_recent_activities      - Garmin activities with metrics")
-    console.print("  get_recovery_status        - HRV, sleep, body battery, RHR")
-    console.print("  get_training_load_analysis - Acute:chronic ratio analysis")
+    console.print("  get_recent_activities        - Garmin activities with metrics")
+    console.print("  get_recovery_status          - HRV, sleep, body battery, RHR, anomalies")
+    console.print("  get_training_load_analysis   - Acute:chronic ratio analysis")
     console.print("  get_strength_training_summary - HEVY volume by muscle group")
-    console.print("  get_exercise_progression   - Track 1RM for specific exercises")
-    console.print("  get_workout_details        - Detailed workouts with sets")
-    console.print("  get_weekly_comparison      - This week vs last week")
-    console.print("  get_longitudinal_summary   - Multi-year aerobic efficiency, baselines, volume")
-    console.print("  sync_garmin_data           - Pull latest data from Garmin\n")
+    console.print("  get_exercise_progression     - Track 1RM for specific exercises")
+    console.print("  get_workout_details          - Detailed workouts with sets")
+    console.print("  get_weekly_comparison        - This week vs last week")
+    console.print("  get_longitudinal_summary     - Multi-year aerobic efficiency, baselines, volume")
+    console.print("  get_cardio_performance       - Running cadence, VO2 max, pacing, elevation")
+    console.print("  get_anomaly_report           - Health/training anomaly scan")
+    console.print("  get_periodization_status     - Training phase, readiness score, deload check")
+    console.print("  sync_garmin_data             - Pull latest data from Garmin\n")
     console.print("Add to Claude Code:")
     console.print("  [green]claude mcp add garmin-sync -- garmin-sync mcp serve[/green]")
 

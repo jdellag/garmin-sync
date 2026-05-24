@@ -35,14 +35,14 @@ src/garmin_sync/
 │   ├── models.py           # HevyWorkout, HevyExercise, HevySet dataclasses
 │   └── sync.py             # HEVY sync manager
 ├── tools/                  # Shared tool executor (used by MCP + OpenAI)
-│   └── executor.py         # ToolExecutor class - 10 fitness data tools
+│   └── executor.py         # ToolExecutor class - 12 fitness data tools
 ├── mcp/                    # Model Context Protocol server
 │   ├── server.py           # FastMCP server with tool definitions
 │   └── serializers.py      # Activity serialization helpers
 ├── ai/                     # OpenAI integration
 │   ├── config.py           # TOML config (API key, model, use_tools); chmods 0o600 on save
 │   ├── chat.py             # ChatSession - interactive coach with tool calling
-│   ├── tools.py            # OpenAI function schemas for 10 tools
+│   ├── tools.py            # OpenAI function schemas for 12 tools
 │   ├── openai_client.py    # API wrapper (chat_with_tools, chat_with_history); sanitizes tool errors
 │   └── prompt_builder.py   # Daily + longitudinal prompts; safe_user_string for HEVY data
 ├── scheduler/
@@ -50,7 +50,9 @@ src/garmin_sync/
 │   ├── launchd.py          # macOS launchd plist management
 │   └── windows_task.py     # Windows Task Scheduler via schtasks.exe
 └── reports/
-    ├── aggregators.py      # SQL aggregation queries (28 public methods)
+    ├── aggregators.py      # SQL aggregation queries (30 public methods)
+    ├── anomaly_detector.py # AnomalyDetector: 9 health/training anomaly checks
+    ├── periodization.py    # PeriodizationAnalyzer: phase detection, readiness, deload
     ├── llm_formatter.py    # Markdown report formatting
     └── report_generator.py # Report coordination & export
 ```
@@ -59,12 +61,12 @@ src/garmin_sync/
 
 The MCP server allows Claude Desktop to access your fitness data directly.
 
-### Available Tools (10 total)
+### Available Tools (12 total)
 
 | Tool | Description |
 |------|-------------|
 | `get_recent_activities` | Garmin activities with metrics (duration, HR, training load, HR drift, cadence, VO2 max) |
-| `get_recovery_status` | HRV, sleep (+ respiration/SpO2), body battery (+ weekday/weekend), RHR, training readiness (+ weakest component) |
+| `get_recovery_status` | HRV, sleep (+ respiration/SpO2), body battery (+ weekday/weekend), RHR, training readiness (+ weakest component), anomalies |
 | `get_training_load_analysis` | Acute:chronic ratio with risk assessment + training effect balance |
 | `get_cardio_performance` | Running cadence trends, VO2 max progression, elevation summary, training effect balance |
 | `get_strength_training_summary` | HEVY volume by muscle group |
@@ -72,6 +74,8 @@ The MCP server allows Claude Desktop to access your fitness data directly.
 | `get_workout_details` | Detailed workouts with sets (e.g., "135×10, 155×8") |
 | `get_weekly_comparison` | This week vs last week metrics |
 | `get_longitudinal_summary` | Multi-year aerobic efficiency, health baselines, volume, HR drift (year/quarter buckets) |
+| `get_anomaly_report` | Health/training anomaly scan: HRV crash, RHR spike, overload, sleep degradation, SpO2, etc. |
+| `get_periodization_status` | Training phase, composite readiness score (0-100), deload recommendation |
 | `sync_garmin_data` | Trigger a fresh sync from Garmin/HEVY |
 
 ### Setup
@@ -88,9 +92,9 @@ garmin-sync mcp info
 
 | File | Purpose |
 |------|---------|
-| `tools/executor.py` | `ToolExecutor` class - shared implementation for all 10 tools |
+| `tools/executor.py` | `ToolExecutor` class - shared implementation for all 12 tools |
 | `mcp/server.py` | FastMCP server that exposes tools via MCP protocol |
-| `ai/tools.py` | OpenAI function schemas (same 10 tools) |
+| `ai/tools.py` | OpenAI function schemas (same 12 tools) |
 
 ## AI Chat with Tool Calling
 
@@ -266,7 +270,7 @@ pytest tests/unit/test_ai_tools.py -v # Tool calling tests
 pytest --cov=garmin_sync         # With coverage
 ```
 
-**580+ tests** covering all modules.
+**630+ tests** covering all modules.
 
 ## Configuration
 
@@ -318,6 +322,11 @@ garmin-sync sync all           # Sync all data
 garmin-sync analyze chat       # Talk to AI coach
 garmin-sync stats today        # Quick daily summary
 garmin-sync stats week         # Quick weekly summary
+garmin-sync stats readiness    # One-line readiness + phase
+
+# Analysis
+garmin-sync analyze anomalies      # Health/training anomaly scan
+garmin-sync analyze periodization  # Phase, readiness score, deload check
 
 # Reports
 garmin-sync report weekly      # Weekly report

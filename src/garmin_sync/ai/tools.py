@@ -172,6 +172,30 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_anomaly_report",
+            "description": "Scan recent health and training data for anomalies. Checks HRV crashes, RHR spikes, training overload/detraining, sleep degradation, body battery depletion, stress-recovery imbalance, overreaching, and SpO2 concerns. Returns anomalies sorted by severity (critical first).",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_periodization_status",
+            "description": "Get current training phase (recovery/base/build/peak/overload), composite readiness score (0-100 with green/yellow/red signal from HRV, sleep, body battery, RHR, and A:C ratio), and deload recommendation. Use when the user asks about training phase, readiness to train, or whether they need a deload week.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "sync_garmin_data",
             "description": "Sync latest data from Garmin Connect (and HEVY if configured). Use this when the user mentions data seems stale or wants to see the most recent activities.",
             "parameters": {
