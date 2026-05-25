@@ -201,9 +201,9 @@ class Repository:
                     average_hr = excluded.average_hr,
                     max_hr = excluded.max_hr,
                     calories = excluded.calories,
-                    hr_drift = excluded.hr_drift,
+                    hr_drift = COALESCE(excluded.hr_drift, activities.hr_drift),
                     raw_json = excluded.raw_json,
-                    fit_parsed = excluded.fit_parsed,
+                    fit_parsed = MAX(excluded.fit_parsed, activities.fit_parsed),
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -329,9 +329,17 @@ class Repository:
                     floors_ascended, floors_descended, raw_json, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(date) DO UPDATE SET
-                    total_steps = excluded.total_steps,
-                    step_goal = excluded.step_goal,
-                    total_calories = excluded.total_calories,
+                    total_steps = COALESCE(excluded.total_steps, daily_summaries.total_steps),
+                    step_goal = COALESCE(excluded.step_goal, daily_summaries.step_goal),
+                    steps_distance_meters = COALESCE(excluded.steps_distance_meters, daily_summaries.steps_distance_meters),
+                    total_calories = COALESCE(excluded.total_calories, daily_summaries.total_calories),
+                    active_calories = COALESCE(excluded.active_calories, daily_summaries.active_calories),
+                    bmr_calories = COALESCE(excluded.bmr_calories, daily_summaries.bmr_calories),
+                    highly_active_seconds = COALESCE(excluded.highly_active_seconds, daily_summaries.highly_active_seconds),
+                    active_seconds = COALESCE(excluded.active_seconds, daily_summaries.active_seconds),
+                    sedentary_seconds = COALESCE(excluded.sedentary_seconds, daily_summaries.sedentary_seconds),
+                    floors_ascended = COALESCE(excluded.floors_ascended, daily_summaries.floors_ascended),
+                    floors_descended = COALESCE(excluded.floors_descended, daily_summaries.floors_descended),
                     raw_json = excluded.raw_json,
                     updated_at = CURRENT_TIMESTAMP
                 """,
@@ -390,8 +398,19 @@ class Repository:
                     raw_json, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(date) DO UPDATE SET
-                    total_sleep_seconds = excluded.total_sleep_seconds,
-                    sleep_score = excluded.sleep_score,
+                    sleep_start = COALESCE(excluded.sleep_start, sleep_daily.sleep_start),
+                    sleep_end = COALESCE(excluded.sleep_end, sleep_daily.sleep_end),
+                    total_sleep_seconds = COALESCE(excluded.total_sleep_seconds, sleep_daily.total_sleep_seconds),
+                    deep_sleep_seconds = COALESCE(excluded.deep_sleep_seconds, sleep_daily.deep_sleep_seconds),
+                    light_sleep_seconds = COALESCE(excluded.light_sleep_seconds, sleep_daily.light_sleep_seconds),
+                    rem_sleep_seconds = COALESCE(excluded.rem_sleep_seconds, sleep_daily.rem_sleep_seconds),
+                    awake_seconds = COALESCE(excluded.awake_seconds, sleep_daily.awake_seconds),
+                    sleep_score = COALESCE(excluded.sleep_score, sleep_daily.sleep_score),
+                    sleep_quality = COALESCE(excluded.sleep_quality, sleep_daily.sleep_quality),
+                    avg_sleep_stress = COALESCE(excluded.avg_sleep_stress, sleep_daily.avg_sleep_stress),
+                    avg_respiration = COALESCE(excluded.avg_respiration, sleep_daily.avg_respiration),
+                    avg_spo2 = COALESCE(excluded.avg_spo2, sleep_daily.avg_spo2),
+                    avg_hrv = COALESCE(excluded.avg_hrv, sleep_daily.avg_hrv),
                     raw_json = excluded.raw_json,
                     updated_at = CURRENT_TIMESTAMP
                 """,
@@ -452,8 +471,13 @@ class Repository:
                     max_stress_level, avg_stress_level, raw_json, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(date) DO UPDATE SET
-                    overall_stress_level = excluded.overall_stress_level,
-                    avg_stress_level = excluded.avg_stress_level,
+                    overall_stress_level = COALESCE(excluded.overall_stress_level, stress_daily.overall_stress_level),
+                    rest_stress_duration = COALESCE(excluded.rest_stress_duration, stress_daily.rest_stress_duration),
+                    low_stress_duration = COALESCE(excluded.low_stress_duration, stress_daily.low_stress_duration),
+                    medium_stress_duration = COALESCE(excluded.medium_stress_duration, stress_daily.medium_stress_duration),
+                    high_stress_duration = COALESCE(excluded.high_stress_duration, stress_daily.high_stress_duration),
+                    max_stress_level = COALESCE(excluded.max_stress_level, stress_daily.max_stress_level),
+                    avg_stress_level = COALESCE(excluded.avg_stress_level, stress_daily.avg_stress_level),
                     raw_json = excluded.raw_json,
                     updated_at = CURRENT_TIMESTAMP
                 """,
@@ -502,8 +526,13 @@ class Repository:
                     baseline_avg, weekly_avg, last_night_avg, raw_json, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(date) DO UPDATE SET
-                    hrv_value = excluded.hrv_value,
-                    hrv_status = excluded.hrv_status,
+                    hrv_value = COALESCE(excluded.hrv_value, hrv_daily.hrv_value),
+                    hrv_status = COALESCE(excluded.hrv_status, hrv_daily.hrv_status),
+                    baseline_low = COALESCE(excluded.baseline_low, hrv_daily.baseline_low),
+                    baseline_high = COALESCE(excluded.baseline_high, hrv_daily.baseline_high),
+                    baseline_avg = COALESCE(excluded.baseline_avg, hrv_daily.baseline_avg),
+                    weekly_avg = COALESCE(excluded.weekly_avg, hrv_daily.weekly_avg),
+                    last_night_avg = COALESCE(excluded.last_night_avg, hrv_daily.last_night_avg),
                     raw_json = excluded.raw_json,
                     updated_at = CURRENT_TIMESTAMP
                 """,
@@ -532,10 +561,12 @@ class Repository:
                     min_level, max_level, raw_json, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(date) DO UPDATE SET
-                    start_level = excluded.start_level,
-                    end_level = excluded.end_level,
-                    min_level = excluded.min_level,
-                    max_level = excluded.max_level,
+                    charged = COALESCE(excluded.charged, body_battery_daily.charged),
+                    drained = COALESCE(excluded.drained, body_battery_daily.drained),
+                    start_level = COALESCE(excluded.start_level, body_battery_daily.start_level),
+                    end_level = COALESCE(excluded.end_level, body_battery_daily.end_level),
+                    min_level = COALESCE(excluded.min_level, body_battery_daily.min_level),
+                    max_level = COALESCE(excluded.max_level, body_battery_daily.max_level),
                     raw_json = excluded.raw_json,
                     updated_at = CURRENT_TIMESTAMP
                 """,
@@ -564,8 +595,14 @@ class Repository:
                     feedback_phrase, raw_json, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(date) DO UPDATE SET
-                    score = excluded.score,
-                    level = excluded.level,
+                    score = COALESCE(excluded.score, training_readiness.score),
+                    level = COALESCE(excluded.level, training_readiness.level),
+                    sleep_score = COALESCE(excluded.sleep_score, training_readiness.sleep_score),
+                    recovery_score = COALESCE(excluded.recovery_score, training_readiness.recovery_score),
+                    hrv_score = COALESCE(excluded.hrv_score, training_readiness.hrv_score),
+                    stress_history_score = COALESCE(excluded.stress_history_score, training_readiness.stress_history_score),
+                    training_load_balance_score = COALESCE(excluded.training_load_balance_score, training_readiness.training_load_balance_score),
+                    feedback_phrase = COALESCE(excluded.feedback_phrase, training_readiness.feedback_phrase),
                     raw_json = excluded.raw_json,
                     updated_at = CURRENT_TIMESTAMP
                 """,
@@ -1429,20 +1466,25 @@ class Repository:
         else:
             old_val = None
 
+        # SQLite's UNIQUE treats NULL != NULL, so ON CONFLICT never
+        # matches rows where exercise_name IS NULL (all cardio PRs).
+        # Delete the old row first so the INSERT always succeeds cleanly.
+        if existing:
+            cursor.execute(
+                """
+                DELETE FROM personal_records
+                WHERE category = ? AND metric_name = ?
+                    AND COALESCE(exercise_name, '') = COALESCE(?, '')
+                """,
+                (category, metric_name, exercise_name),
+            )
+
         cursor.execute(
             """
             INSERT INTO personal_records
                 (category, metric_name, value, previous_value,
                  activity_id, workout_id, exercise_name, date_set)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(category, metric_name, exercise_name)
-            DO UPDATE SET
-                previous_value = personal_records.value,
-                value = excluded.value,
-                activity_id = excluded.activity_id,
-                workout_id = excluded.workout_id,
-                date_set = excluded.date_set,
-                created_at = CURRENT_TIMESTAMP
             """,
             (category, metric_name, value, old_val,
              activity_id, workout_id, exercise_name, date_set),

@@ -129,6 +129,11 @@ class DataAggregator:
     def __init__(self, db: Database):
         self.db = db
 
+        # Lazy import to avoid circular dependency at module level.
+        from garmin_sync.db.repository import Repository  # noqa: E402
+
+        self.repo = Repository(db)
+
     def get_activity_summary(
         self,
         start_date: date,

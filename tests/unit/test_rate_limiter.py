@@ -15,7 +15,7 @@ class TestRateLimiter:
         """Test default rate limits."""
         limiter = RateLimiter()
         assert limiter.calls_per_minute == 15
-        assert limiter.calls_per_hour == 100
+        assert limiter.calls_per_hour == 800
 
     def test_custom_limits(self):
         """Test custom rate limits."""

@@ -48,7 +48,7 @@ class Activity:
         return cls(
             activity_id=str(data.get("activityId", "")),
             activity_name=data.get("activityName"),
-            activity_type=data.get("activityType", {}).get("typeKey"),
+            activity_type=(data.get("activityType") or {}).get("typeKey"),
             start_time=data.get("startTimeGMT"),
             start_time_local=data.get("startTimeLocal"),
             timezone=data.get("timeZoneId"),
@@ -157,7 +157,11 @@ class SleepDaily:
     @classmethod
     def from_api_response(cls, data: dict) -> "SleepDaily":
         """Create SleepDaily from Garmin API response."""
-        daily_sleep = data.get("dailySleepDTO", {})
+        # Garmin may return null for dailySleepDTO or sleepScores on
+        # partial-data nights (watch removed, etc.), so coerce to {}.
+        daily_sleep = data.get("dailySleepDTO") or {}
+        sleep_scores = (data.get("sleepScores") or {})
+        overall = sleep_scores.get("overall") or {}
         return cls(
             date=daily_sleep.get("calendarDate", ""),
             sleep_start=daily_sleep.get("sleepStartTimestampGMT"),
@@ -167,8 +171,8 @@ class SleepDaily:
             light_sleep_seconds=daily_sleep.get("lightSleepSeconds"),
             rem_sleep_seconds=daily_sleep.get("remSleepSeconds"),
             awake_seconds=daily_sleep.get("awakeSleepSeconds"),
-            sleep_score=data.get("sleepScores", {}).get("overall", {}).get("value"),
-            sleep_quality=data.get("sleepScores", {}).get("overall", {}).get("qualifierKey"),
+            sleep_score=overall.get("value"),
+            sleep_quality=overall.get("qualifierKey"),
             avg_sleep_stress=daily_sleep.get("avgSleepStress"),
             avg_respiration=daily_sleep.get("avgRespirationRate"),
             avg_spo2=daily_sleep.get("avgOxygenSaturationPercentage"),
