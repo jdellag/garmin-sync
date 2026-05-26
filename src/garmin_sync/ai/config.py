@@ -9,10 +9,13 @@ For backward compatibility, ``load_config`` falls back to reading
 ``[analysis]`` from ``config.toml`` when ``profile.toml`` is absent.
 """
 
+import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 import tomli_w
 
@@ -78,6 +81,7 @@ def _read_toml(path: Path) -> dict:
         with open(path, "rb") as f:
             return tomllib.load(f)
     except Exception:
+        logger.debug("Failed to read TOML file %s", path, exc_info=True)
         return {}
 
 

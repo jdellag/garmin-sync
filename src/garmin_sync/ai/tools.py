@@ -58,7 +58,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_strength_training_summary",
-            "description": "Get HEVY strength training summary including total sessions, volume in pounds, sets by muscle group, recent workouts with exercise details, RPE averages with overreaching detection, RPE-adjusted volume metrics, and HEVY-flagged personal records.",
+            "description": "Get HEVY strength training summary including total sessions, volume in pounds, sets by muscle group, recent workouts with exercise details, RPE averages with overreaching detection, RPE-adjusted volume metrics, and HEVY-flagged personal records. Requires HEVY integration to be configured.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -76,7 +76,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_exercise_progression",
-            "description": "Track strength progression for a specific exercise over time. Returns estimated 1RM history, max weights, progression percentage, and RPE trend alongside strength gains. Use this when asked about progress on specific lifts like bench press, squat, or deadlift.",
+            "description": "Track strength progression for a specific exercise over time. Returns estimated 1RM history, max weights, progression percentage, and RPE trend alongside strength gains. Requires HEVY integration; returns empty if HEVY is not configured. Use this when asked about progress on specific lifts like bench press, squat, or deadlift.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -98,7 +98,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_workout_details",
-            "description": "Get detailed HEVY workout data with exercise names, muscle groups, and sets in compact format (e.g., '135x10, 155x8'). Use this to see exactly what exercises and weights were used.",
+            "description": "Get detailed HEVY workout data with exercise names, muscle groups, and sets in compact format (e.g., '135x10, 155x8'). Requires HEVY integration. Use this to see exactly what exercises and weights were used.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -128,7 +128,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_longitudinal_summary",
-            "description": "Multi-year fitness review covering aerobic efficiency (pace + HR + meters/heartbeat), yearly health baselines (RHR, HRV, sleep, stress), training volume by sport with weekly-volume consistency, and HR drift trend. Use this when the user asks about long-term trends, plateaus, year-over-year change, or how their fitness has evolved.",
+            "description": "Multi-year fitness review covering aerobic efficiency (pace + HR + meters/heartbeat), yearly health baselines (RHR, HRV, sleep, stress), training volume by sport with weekly-volume consistency, and HR drift trend. Requires multi-year synced data; returns sparse results if the database only has recent data. Use this when the user asks about long-term trends, plateaus, year-over-year change, or how their fitness has evolved.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -197,7 +197,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "sync_garmin_data",
-            "description": "Sync latest data from Garmin Connect (and HEVY if configured). Use this when the user mentions data seems stale or wants to see the most recent activities.",
+            "description": "Sync latest data from Garmin Connect (and HEVY if configured). Triggers activity, sleep, HR, HRV, stress, body battery, SpO2, and respiration sync. For detailed per-day data use the CLI with --detailed. Use this when the user mentions data seems stale or wants to see the most recent activities.",
             "parameters": {
                 "type": "object",
                 "properties": {

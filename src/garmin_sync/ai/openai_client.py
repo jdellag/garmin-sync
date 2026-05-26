@@ -1,8 +1,11 @@
 """OpenAI API client for fitness analysis."""
 
 import json
+import logging
 import sys
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 from openai import OpenAI
 
@@ -221,17 +224,24 @@ def chat_with_tools(
                     result = tool_executor.execute(tool_name, arguments)
                     result_str = json.dumps(result)
                 except Exception as e:
-                    # Don't echo raw exception strings into the LLM transcript:
-                    # they can contain stack-trace fragments, paths, or upstream
-                    # API response bodies. Log server-side, return a generic
-                    # marker to the model.
-                    print(
-                        f"Tool {tool_name!r} raised {type(e).__name__}: {e}",
-                        file=sys.stderr,
+                    # Log the full exception server-side for debugging, but
+                    # give the model a safe description so it can inform the
+                    # user.  ValueError messages are intentionally user-facing
+                    # (e.g. "No data found for …"); other exception types get
+                    # a generic summary to avoid leaking paths or API bodies.
+                    logger.debug(
+                        "Tool %r raised %s: %s",
+                        tool_name, type(e).__name__, e,
+                        exc_info=True,
                     )
+                    if isinstance(e, ValueError):
+                        safe_msg = f"{tool_name}: {e}"
+                    else:
+                        safe_msg = f"{tool_name} failed ({type(e).__name__})"
                     result_str = json.dumps({
-                        "error": "Tool execution failed",
-                        "type": type(e).__name__,
+                        "error": safe_msg,
+                        "error_type": type(e).__name__,
+                        "tool": tool_name,
                     })
 
                 # Add tool result to messages

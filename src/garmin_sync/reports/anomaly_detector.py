@@ -7,11 +7,14 @@ CLI or AI tools can surface to the user.
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Optional
 
 from garmin_sync.db.database import Database
 from garmin_sync.reports.aggregators import DataAggregator
+
+logger = logging.getLogger(__name__)
 
 _SEVERITY_ORDER: dict[str, int] = {"critical": 0, "warning": 1, "info": 2}
 
@@ -71,6 +74,7 @@ class AnomalyDetector:
                 anomalies.extend(check(end_date))
             except Exception:
                 # Individual check failures must never block other checks.
+                logger.debug("Anomaly check %s failed", check.__name__, exc_info=True)
                 continue
 
         anomalies.sort(key=lambda a: _SEVERITY_ORDER.get(a["severity"], 99))

@@ -814,6 +814,118 @@ class SyncManager:
             ),
         )
 
+    def dry_run_plan(
+        self,
+        days: int = 30,
+        force: bool = False,
+        detailed: bool = False,
+    ) -> dict:
+        """Preview what a sync would do without making any API calls.
+
+        Args:
+            days: Number of days to sync
+            force: Whether --force would be used
+            detailed: Whether --detailed would be used
+
+        Returns:
+            Dict with date range, per-type counts, and estimated API calls.
+        """
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days)
+        freshness_cutoff = date.today() - timedelta(days=FRESHNESS_DAYS)
+
+        plan: dict = {
+            "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat(), "days": days},
+            "mode": "detailed" if detailed else "batch",
+            "force": force,
+            "types": {},
+            "estimated_api_calls": 0,
+        }
+
+        # Activities
+        existing_ids = self.repo.get_activity_ids(since_date=start_date.isoformat())
+        activity_info = {
+            "existing": len(existing_ids),
+            "action": "re-fetch all" if force else "fetch new only",
+            "api_calls": 1,  # one call to list activities in range
+        }
+        plan["types"]["activities"] = activity_info
+        plan["estimated_api_calls"] += 1
+
+        # Daily metrics
+        for data_type, table in _DAILY_METRIC_TABLE.items():
+            existing = 0
+            stale = 0  # within freshness window → will re-fetch
+            fresh = 0  # beyond freshness window → skip
+
+            current = start_date
+            while current <= end_date:
+                has_record = self.repo.has_daily_record(table, current.isoformat())
+                if has_record:
+                    existing += 1
+                    if current >= freshness_cutoff:
+                        stale += 1
+                    else:
+                        fresh += 1
+                current += timedelta(days=1)
+
+            total_days = (end_date - start_date).days + 1
+            to_fetch = total_days if force else (total_days - fresh)
+
+            # Estimate API calls: batch endpoints = 1, per-day = to_fetch
+            if detailed and data_type in ("sleep", "stress", "hrv"):
+                api_calls = to_fetch
+            elif data_type in ("heart_rate", "training_readiness", "respiration", "spo2"):
+                # These always use per-day endpoints
+                api_calls = to_fetch
+            else:
+                api_calls = 1  # batch endpoint
+
+            plan["types"][data_type] = {
+                "existing": existing,
+                "fresh_skipped": 0 if force else fresh,
+                "to_fetch": to_fetch,
+                "api_calls": api_calls,
+            }
+            plan["estimated_api_calls"] += api_calls
+
+        # Body battery (always batch, chunked by 30 days)
+        bb_existing = 0
+        current = start_date
+        while current <= end_date:
+            if self.repo.has_daily_record("body_battery_daily", current.isoformat()):
+                bb_existing += 1
+            current += timedelta(days=1)
+        import math
+        bb_chunks = math.ceil(days / 30)
+        plan["types"]["body_battery"] = {
+            "existing": bb_existing,
+            "to_fetch": days + 1,
+            "api_calls": bb_chunks,
+        }
+        plan["estimated_api_calls"] += bb_chunks
+
+        # Daily summaries (batch)
+        plan["types"]["daily_summary"] = {
+            "api_calls": 1,
+        }
+        plan["estimated_api_calls"] += 1
+
+        # HEVY status
+        try:
+            from garmin_sync.ai.config import load_config
+            settings = get_settings()
+            ai_config = load_config(settings.ai_config_path, settings.profile_path)
+            hevy_configured = ai_config.hevy.is_configured() and ai_config.hevy.enabled
+            plan["hevy"] = {
+                "configured": hevy_configured,
+                "sync_days": ai_config.hevy.sync_days or days if hevy_configured else None,
+            }
+        except Exception:
+            plan["hevy"] = {"configured": False}
+
+        return plan
+
     def _update_sync_metadata(self, data_type: str, result: SyncResult):
         """Update sync metadata after a sync operation."""
         metadata = SyncMetadata(

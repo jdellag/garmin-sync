@@ -1,5 +1,7 @@
 """Tests for MCP server tools."""
 
+import sqlite3
+
 import pytest
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch, call
@@ -1393,3 +1395,46 @@ class TestMCPCLIPhase2:
         assert "get_workout_details" in result.stdout
         assert "get_weekly_comparison" in result.stdout
         assert "sync_garmin_data" in result.stdout
+
+
+class TestMCPErrorHandling:
+    """Test structured error responses from MCP tools."""
+
+    def test_mcp_tool_returns_structured_error_on_value_error(self):
+        """Test that ValueError produces DATA_MISSING error type."""
+        from garmin_sync.mcp import server
+
+        mock_executor = MagicMock()
+        mock_executor.get_recovery_status.side_effect = ValueError(
+            "No HRV data found"
+        )
+
+        with patch.object(server, "_get_executor", return_value=mock_executor):
+            result = server.get_recovery_status()
+
+        assert result["error"] is True
+        assert result["error_type"] == "DATA_MISSING"
+        assert "No HRV data" in result["message"]
+
+    def test_mcp_tool_returns_structured_error_on_runtime_error(self):
+        """Test that RuntimeError produces INTERNAL error type."""
+        from garmin_sync.mcp import server
+
+        mock_executor = MagicMock()
+        mock_executor.get_recovery_status.side_effect = RuntimeError("unexpected")
+
+        with patch.object(server, "_get_executor", return_value=mock_executor):
+            result = server.get_recovery_status()
+
+        assert result["error"] is True
+        assert result["error_type"] == "INTERNAL"
+
+    def test_mcp_error_classification_sync_needed(self):
+        """Test that sqlite3.OperationalError classifies as SYNC_NEEDED."""
+        from garmin_sync.mcp.server import _classify_mcp_error
+
+        error_type, message = _classify_mcp_error(
+            sqlite3.OperationalError("no such table: sleep_daily")
+        )
+        assert error_type == "SYNC_NEEDED"
+        assert "sleep_daily" in message

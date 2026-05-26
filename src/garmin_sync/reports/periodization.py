@@ -6,10 +6,13 @@ deload periods based on aggregated Garmin and HEVY data.
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 
 from garmin_sync.db.database import Database
 from garmin_sync.reports.aggregators import DataAggregator
+
+logger = logging.getLogger(__name__)
 
 
 class PeriodizationAnalyzer:
@@ -107,7 +110,7 @@ class PeriodizationAnalyzer:
 
         except Exception:
             # Any upstream failure should not propagate; return safe defaults.
-            pass
+            logger.warning("Phase detection failed", exc_info=True)
 
         return result
 
@@ -146,27 +149,27 @@ class PeriodizationAnalyzer:
         try:
             self._score_hrv(end_date, components)
         except Exception:
-            pass
+            logger.debug("Readiness: HRV scoring failed", exc_info=True)
 
         try:
             self._score_sleep(end_date, components)
         except Exception:
-            pass
+            logger.debug("Readiness: sleep scoring failed", exc_info=True)
 
         try:
             self._score_body_battery(end_date, components)
         except Exception:
-            pass
+            logger.debug("Readiness: body battery scoring failed", exc_info=True)
 
         try:
             self._score_resting_hr(end_date, components)
         except Exception:
-            pass
+            logger.debug("Readiness: resting HR scoring failed", exc_info=True)
 
         try:
             self._score_ac_ratio(end_date, components)
         except Exception:
-            pass
+            logger.debug("Readiness: A:C ratio scoring failed", exc_info=True)
 
         total = sum(c["score"] for c in components.values())
 
@@ -234,7 +237,7 @@ class PeriodizationAnalyzer:
                 )
 
         except Exception:
-            pass
+            logger.debug("Deload recommendation failed", exc_info=True)
 
         return result
 
@@ -386,7 +389,7 @@ class PeriodizationAnalyzer:
             if delta is not None and delta < -10:
                 return True
         except Exception:
-            pass
+            logger.debug("Recovery check: HRV lookup failed", exc_info=True)
 
         # RHR delta > +3 bpm
         try:
@@ -395,7 +398,7 @@ class PeriodizationAnalyzer:
             if rhr_delta is not None and rhr_delta > 3:
                 return True
         except Exception:
-            pass
+            logger.debug("Recovery check: RHR lookup failed", exc_info=True)
 
         # Body battery morning high < 40
         try:
@@ -405,7 +408,7 @@ class PeriodizationAnalyzer:
             if morning is not None and morning < 40:
                 return True
         except Exception:
-            pass
+            logger.debug("Recovery check: body battery lookup failed", exc_info=True)
 
         return False
 

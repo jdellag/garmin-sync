@@ -1,12 +1,16 @@
 """macOS launchd scheduler management."""
 
+import logging
 import plistlib
 import shlex
 import shutil
 import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from garmin_sync.config.paths import default_data_dir
+
+logger = logging.getLogger(__name__)
 
 PLIST_NAME = "com.garmin-sync.daily.plist"
 LABEL = "com.garmin-sync.daily"
@@ -152,7 +156,7 @@ def uninstall() -> tuple[bool, str]:
 
 
 def get_status() -> dict:
-    """Get current scheduler status."""
+    """Get current scheduler status including next run time and last sync info."""
     plist_path = get_plist_path()
 
     status = {
@@ -160,12 +164,15 @@ def get_status() -> dict:
         "plist_path": str(plist_path),
         "loaded": False,
         "schedule": None,
+        "last_exit_status": None,
+        "next_run": None,
+        "last_sync_age": None,
     }
 
     if not plist_path.exists():
         return status
 
-    # Check if loaded
+    # Check if loaded and get last exit status
     result = subprocess.run(
         ["launchctl", "list", LABEL],
         capture_output=True,
@@ -173,7 +180,19 @@ def get_status() -> dict:
     )
     status["loaded"] = result.returncode == 0
 
+    # Parse LastExitStatus from launchctl list output
+    if result.returncode == 0 and result.stdout:
+        for line in result.stdout.splitlines():
+            if "LastExitStatus" in line:
+                try:
+                    # Format: "    "LastExitStatus" = 0;"
+                    val = line.split("=")[-1].strip().rstrip(";")
+                    status["last_exit_status"] = int(val)
+                except (ValueError, IndexError):
+                    pass
+
     # Parse schedule from plist
+    intervals = []
     try:
         with open(plist_path, "rb") as f:
             plist_data = plistlib.load(f)
@@ -192,7 +211,107 @@ def get_status() -> dict:
             "weekday_time": f"{weekday_hour}:00 AM" if weekday_hour else None,
             "weekend_time": f"{weekend_hour}:00 AM" if weekend_hour else None,
         }
+
+        # Compute next run time from schedule
+        status["next_run"] = _compute_next_run(intervals)
+
+        # Get last sync age from log file
+        log_path = plist_data.get("StandardOutPath")
+        if log_path:
+            status["last_sync_age"] = _get_last_sync_age(Path(log_path))
+
     except Exception:
-        pass
+        logger.debug("Failed to parse plist for status", exc_info=True)
 
     return status
+
+
+def _compute_next_run(intervals: list[dict]) -> str | None:
+    """Compute the next fire time from StartCalendarInterval entries.
+
+    Launchd weekdays: 0=Sunday, 1=Monday, ..., 6=Saturday.
+    Python weekdays: 0=Monday, ..., 6=Sunday.
+    """
+    if not intervals:
+        return None
+
+    now = datetime.now()
+    # Python weekday (Mon=0) → launchd weekday (Sun=0)
+    py_to_launchd = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 0}
+    launchd_today = py_to_launchd[now.weekday()]
+
+    candidates: list[datetime] = []
+    for interval in intervals:
+        target_day = interval.get("Weekday")
+        target_hour = interval.get("Hour", 0)
+        target_minute = interval.get("Minute", 0)
+
+        if target_day is None:
+            continue
+
+        # Days until next occurrence of this weekday
+        day_diff = (target_day - launchd_today) % 7
+        candidate = now.replace(
+            hour=target_hour, minute=target_minute, second=0, microsecond=0,
+        ) + timedelta(days=day_diff)
+
+        # If it's today but already passed, push to next week
+        if candidate <= now:
+            candidate += timedelta(days=7)
+
+        candidates.append(candidate)
+
+    if not candidates:
+        return None
+
+    next_fire = min(candidates)
+    return next_fire.strftime("%Y-%m-%d %H:%M")
+
+
+def _get_last_sync_age(log_path: Path) -> str | None:
+    """Parse the last timestamp from the sync log and return a human-readable age."""
+    if not log_path.exists():
+        return None
+
+    try:
+        # Read last few lines (log starts each run with a date line)
+        text = log_path.read_text().strip()
+        if not text:
+            return None
+
+        # Find the most recent line starting with a date-like pattern
+        # The bash wrapper writes: $(date) then garmin-sync output
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            # Try common date formats from $(date)
+            for fmt in ("%a %b %d %H:%M:%S %Z %Y", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    ts = datetime.strptime(line[:len(fmt) + 5], fmt)
+                    delta = datetime.now() - ts
+                    return _format_timedelta(delta)
+                except (ValueError, IndexError):
+                    continue
+
+    except Exception:
+        logger.debug("Failed to parse sync log age", exc_info=True)
+
+    return None
+
+
+def _format_timedelta(delta: timedelta) -> str:
+    """Format a timedelta as a human-readable age string."""
+    total_seconds = int(delta.total_seconds())
+    if total_seconds < 0:
+        return "just now"
+    if total_seconds < 60:
+        return f"{total_seconds}s ago"
+    minutes = total_seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    return f"{days}d ago"

@@ -1,10 +1,13 @@
 """Shared tool executor for fitness data tools."""
 
+import logging
 from datetime import date, timedelta
 from typing import Any
 
 from garmin_sync.db.repository import Repository
 from garmin_sync.reports.aggregators import DataAggregator
+
+logger = logging.getLogger(__name__)
 
 KG_TO_LBS = 2.20462
 
@@ -168,7 +171,8 @@ class ToolExecutor:
             if anomalies:
                 result["anomalies"] = anomalies
         except Exception:
-            pass
+            logger.debug("Anomaly enrichment failed in get_recovery_status", exc_info=True)
+            result["anomaly_error"] = "Anomaly detection unavailable"
 
         return result
 

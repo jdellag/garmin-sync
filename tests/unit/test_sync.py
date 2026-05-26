@@ -1,6 +1,6 @@
 """Tests for sync manager."""
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 import json
@@ -10,6 +10,7 @@ import pytest
 from garmin_sync.db.database import Database
 from garmin_sync.db.repository import Repository
 from garmin_sync.sync.sync_manager import (
+    FRESHNESS_DAYS,
     SyncManager,
     SyncResult,
     HR_DRIFT_ACTIVITY_TYPES,
@@ -784,3 +785,229 @@ class TestSyncManagerHRDrift:
         path2 = sync_manager._download_and_store_fit("12345")
         assert path2 == path1
         assert mock_client.download_activity_fit.call_count == 1  # Not called again
+
+
+class TestFreshnessDaysBoundary:
+    """Test FRESHNESS_DAYS skip logic boundary conditions.
+
+    The _sync_daily_metric method skips dates older than FRESHNESS_DAYS
+    when a record already exists, unless force=True. These tests verify
+    the boundary behavior using sync_training_readiness which delegates
+    to _sync_daily_metric with table="training_readiness".
+    """
+
+    @pytest.fixture
+    def fixed_today(self):
+        """Return a fixed 'today' date for deterministic tests."""
+        return date(2026, 5, 26)
+
+    @pytest.fixture
+    def db(self):
+        """Create in-memory database."""
+        db = Database(":memory:")
+        db.initialize()
+        db.migrate()
+        return db
+
+    @pytest.fixture
+    def repo(self, db):
+        """Create repository."""
+        return Repository(db)
+
+    @pytest.fixture
+    def mock_client(self):
+        """Create mock Garmin client."""
+        client = MagicMock()
+        client.get_training_readiness.return_value = {
+            "calendarDate": "2026-05-18",
+            "score": 75,
+            "level": "MODERATE",
+        }
+        return client
+
+    @pytest.fixture
+    def sync_manager(self, db, mock_client):
+        """Create SyncManager with mocked client."""
+        console = MagicMock()
+        return SyncManager(db=db, client=mock_client, console=console)
+
+    def _insert_training_readiness(self, repo, date_str):
+        """Insert a training readiness record for the given date."""
+        from garmin_sync.db.models import TrainingReadiness
+
+        model = TrainingReadiness(
+            date=date_str,
+            score=70,
+            level="MODERATE",
+        )
+        repo.upsert_training_readiness(model)
+
+    @patch("garmin_sync.sync.sync_manager.date")
+    def test_date_before_cutoff_skips_existing(
+        self, mock_date, sync_manager, repo, mock_client, fixed_today
+    ):
+        """Date 8 days ago with existing record should be skipped."""
+        mock_date.today.return_value = fixed_today
+        mock_date.side_effect = lambda *args, **kw: date(*args, **kw)
+
+        target = fixed_today - timedelta(days=8)
+        self._insert_training_readiness(repo, target.isoformat())
+
+        mock_client.get_training_readiness.return_value = {
+            "calendarDate": target.isoformat(),
+            "score": 80,
+            "level": "HIGH",
+        }
+
+        result = sync_manager.sync_training_readiness(
+            start_date=target,
+            end_date=target,
+        )
+
+        assert result.records_skipped == 1
+        assert result.records_synced == 0
+
+    @patch("garmin_sync.sync.sync_manager.date")
+    def test_date_at_cutoff_re_fetches(
+        self, mock_date, sync_manager, repo, mock_client, fixed_today
+    ):
+        """Date exactly FRESHNESS_DAYS ago should NOT be skipped."""
+        mock_date.today.return_value = fixed_today
+        mock_date.side_effect = lambda *args, **kw: date(*args, **kw)
+
+        target = fixed_today - timedelta(days=FRESHNESS_DAYS)
+        self._insert_training_readiness(repo, target.isoformat())
+
+        mock_client.get_training_readiness.return_value = {
+            "calendarDate": target.isoformat(),
+            "score": 80,
+            "level": "HIGH",
+        }
+
+        result = sync_manager.sync_training_readiness(
+            start_date=target,
+            end_date=target,
+        )
+
+        assert result.records_synced == 1
+
+    @patch("garmin_sync.sync.sync_manager.date")
+    def test_date_within_window_re_fetches(
+        self, mock_date, sync_manager, repo, mock_client, fixed_today
+    ):
+        """Date 3 days ago (within freshness window) should always re-fetch."""
+        mock_date.today.return_value = fixed_today
+        mock_date.side_effect = lambda *args, **kw: date(*args, **kw)
+
+        target = fixed_today - timedelta(days=3)
+        self._insert_training_readiness(repo, target.isoformat())
+
+        mock_client.get_training_readiness.return_value = {
+            "calendarDate": target.isoformat(),
+            "score": 80,
+            "level": "HIGH",
+        }
+
+        result = sync_manager.sync_training_readiness(
+            start_date=target,
+            end_date=target,
+        )
+
+        assert result.records_synced == 1
+
+    @patch("garmin_sync.sync.sync_manager.date")
+    def test_force_bypasses_skip(
+        self, mock_date, sync_manager, repo, mock_client, fixed_today
+    ):
+        """force=True should always re-fetch even for old existing records."""
+        mock_date.today.return_value = fixed_today
+        mock_date.side_effect = lambda *args, **kw: date(*args, **kw)
+
+        target = fixed_today - timedelta(days=8)
+        self._insert_training_readiness(repo, target.isoformat())
+
+        mock_client.get_training_readiness.return_value = {
+            "calendarDate": target.isoformat(),
+            "score": 80,
+            "level": "HIGH",
+        }
+
+        result = sync_manager.sync_training_readiness(
+            start_date=target,
+            end_date=target,
+            force=True,
+        )
+
+        assert result.records_synced == 1
+
+    @patch("garmin_sync.sync.sync_manager.date")
+    def test_no_existing_record_always_fetches(
+        self, mock_date, sync_manager, mock_client, fixed_today
+    ):
+        """Date 8 days ago with no existing record should still fetch."""
+        mock_date.today.return_value = fixed_today
+        mock_date.side_effect = lambda *args, **kw: date(*args, **kw)
+
+        target = fixed_today - timedelta(days=8)
+
+        mock_client.get_training_readiness.return_value = {
+            "calendarDate": target.isoformat(),
+            "score": 80,
+            "level": "HIGH",
+        }
+
+        result = sync_manager.sync_training_readiness(
+            start_date=target,
+            end_date=target,
+        )
+
+        assert result.records_synced == 1
+
+
+class TestDryRunPlan:
+    """Test SyncManager.dry_run_plan() previews sync without API calls."""
+
+    @pytest.fixture
+    def db(self):
+        db = Database(":memory:")
+        db.initialize()
+        db.migrate()
+        return db
+
+    @pytest.fixture
+    def sync_manager(self, db):
+        console = MagicMock()
+        client = MagicMock()  # Should never be called
+        return SyncManager(db=db, client=client, console=console)
+
+    def test_dry_run_returns_expected_keys(self, sync_manager):
+        """Plan dict contains all expected top-level keys."""
+        plan = sync_manager.dry_run_plan(days=3)
+        assert "date_range" in plan
+        assert "types" in plan
+        assert "estimated_api_calls" in plan
+        assert plan["date_range"]["days"] == 3
+
+    def test_dry_run_counts_existing_records(self, sync_manager, db):
+        """Existing DB records show up in the plan."""
+        from garmin_sync.db.models import TrainingReadiness
+
+        today = date.today()
+        repo = Repository(db)
+        tr = TrainingReadiness(date=today.isoformat(), score=70, level="MODERATE")
+        repo.upsert_training_readiness(tr)
+
+        plan = sync_manager.dry_run_plan(days=1)
+        assert plan["types"]["training_readiness"]["existing"] >= 1
+
+    def test_dry_run_no_api_calls_made(self, sync_manager):
+        """dry_run_plan must not call any API methods."""
+        plan = sync_manager.dry_run_plan(days=5)
+        # The mock client should have zero calls
+        sync_manager._client.assert_not_called()
+        assert plan["estimated_api_calls"] > 0
+
+    def test_dry_run_force_flag(self, sync_manager):
+        """Force mode sets force=True in the plan."""
+        plan = sync_manager.dry_run_plan(days=3, force=True)
+        assert plan["force"] is True

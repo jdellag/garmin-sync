@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import io
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
 
 import fitdecode
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +432,7 @@ def parse_fit_full(fit_data: bytes) -> FitParseResult:
         return FitParseResult(laps=laps, splits=splits, hr_drift=hr_drift)
 
     except Exception:
+        logger.warning("FIT file parsing failed", exc_info=True)
         return FitParseResult()
 
 
@@ -455,6 +459,7 @@ def compute_hr_drift_from_fit(fit_data: bytes) -> Optional[float]:
         hr_samples = extract_hr_samples(fit_data)
         return _compute_hr_drift(hr_samples)
     except Exception:
+        logger.debug("HR drift computation failed", exc_info=True)
         return None
 
 

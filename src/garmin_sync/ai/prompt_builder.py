@@ -1,8 +1,11 @@
 """Build prompts for OpenAI analysis."""
 
 import json
+import logging
 from datetime import date, datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 try:
     from zoneinfo import ZoneInfo
@@ -51,7 +54,7 @@ def process_template(
     try:
         now = datetime.now(ZoneInfo(timezone))
     except Exception:
-        # Fallback to UTC if timezone is invalid
+        logger.debug("Invalid timezone %r, falling back to UTC", timezone)
         now = datetime.now(ZoneInfo("UTC"))
 
     # Determine time of day

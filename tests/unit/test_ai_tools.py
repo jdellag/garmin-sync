@@ -678,3 +678,183 @@ class TestLongitudinalTool:
         result = executor.get_longitudinal_summary(granularity="month")
 
         assert result["range"]["granularity"] == "year"
+
+
+class TestToolExecutorExecutionPaths:
+    """Test individual tool execution paths."""
+
+    @pytest.fixture
+    def mock_repo(self):
+        """Create mock repository."""
+        repo = MagicMock()
+        repo.get_latest_sync_timestamp.return_value = "2026-03-16T10:00:00Z"
+        repo.get_hevy_workout_count.return_value = 0
+        repo.get_recent_prs.return_value = []
+        repo.db = MagicMock()
+        return repo
+
+    @pytest.fixture
+    def mock_aggregator(self):
+        """Create mock aggregator."""
+        agg = MagicMock()
+        agg.get_hrv_context.return_value = {
+            "baseline_7d": 65,
+            "last_night": 62,
+            "delta_from_baseline": -4.6,
+            "status": "BALANCED",
+            "days_below_baseline": 1,
+        }
+        agg.get_sleep_consistency.return_value = {
+            "avg_sleep_seconds": 28800,
+            "sleep_time_variance_mins": 30,
+            "avg_deep_pct": 18.5,
+            "avg_rem_pct": 22.0,
+        }
+        agg.get_body_battery_recovery.return_value = {
+            "avg_overnight_recovery": 60,
+            "avg_morning_high": 85,
+        }
+        agg.get_resting_hr_trend.return_value = {
+            "current": 48,
+            "baseline_28d": 50,
+            "delta": -2,
+            "trend": "falling",
+        }
+        agg.get_training_readiness_latest.return_value = {
+            "score": 75,
+            "level": "MODERATE",
+        }
+        agg.get_training_load_trend.return_value = {
+            "acute_load_7d": 200,
+            "chronic_load_28d": 220,
+            "acute_chronic_ratio": 0.91,
+            "week_change_pct": 5.0,
+            "by_type": {"running": {"load": 150, "count": 3}},
+        }
+        agg.get_sleep_respiration_trends.return_value = {}
+        agg.get_allday_respiration_spo2.return_value = {}
+        agg.get_stress_recovery_correlation.return_value = {}
+        agg.get_sleep_performance_correlation.return_value = {}
+        return agg
+
+    @pytest.fixture
+    def executor(self, mock_repo, mock_aggregator):
+        """Create ToolExecutor with mocks."""
+        return ToolExecutor(mock_repo, mock_aggregator)
+
+    @patch("garmin_sync.reports.anomaly_detector.AnomalyDetector")
+    def test_get_recovery_status_includes_anomaly_enrichment(
+        self, mock_detector_cls, executor
+    ):
+        """Test that recovery status includes anomalies when present."""
+        mock_detector_cls.return_value.detect_anomalies.return_value = [
+            {"check": "hrv_crash", "severity": "warning", "message": "test", "data": {}},
+        ]
+        result = executor.get_recovery_status()
+        assert len(result["anomalies"]) == 1
+
+    @patch("garmin_sync.reports.anomaly_detector.AnomalyDetector")
+    def test_get_recovery_status_anomaly_failure_surfaces_error(
+        self, mock_detector_cls, executor
+    ):
+        """Test that anomaly detection failure surfaces an error key."""
+        mock_detector_cls.side_effect = RuntimeError("boom")
+        result = executor.get_recovery_status()
+        assert "anomaly_error" in result
+        assert "anomalies" not in result
+
+    @patch("garmin_sync.reports.anomaly_detector.AnomalyDetector")
+    def test_get_anomaly_report_returns_structured_summary(
+        self, mock_detector_cls, executor
+    ):
+        """Test that anomaly report returns correct summary counts."""
+        mock_detector_cls.return_value.detect_anomalies.return_value = [
+            {"check": "training_overload", "severity": "critical", "message": "A:C > 1.5", "data": {}},
+            {"check": "hrv_crash", "severity": "warning", "message": "HRV dropped", "data": {}},
+            {"check": "rhr_spike", "severity": "warning", "message": "RHR elevated", "data": {}},
+        ]
+        result = executor.get_anomaly_report()
+        assert result["total"] == 3
+        assert result["summary"]["critical"] == 1
+        assert result["summary"]["warning"] == 2
+
+    @patch("garmin_sync.reports.anomaly_detector.AnomalyDetector")
+    def test_get_anomaly_report_empty_when_healthy(self, mock_detector_cls, executor):
+        """Test that anomaly report is empty when no anomalies detected."""
+        mock_detector_cls.return_value.detect_anomalies.return_value = []
+        result = executor.get_anomaly_report()
+        assert result["total"] == 0
+        assert result["anomalies"] == []
+
+    @patch("garmin_sync.reports.periodization.PeriodizationAnalyzer")
+    def test_get_periodization_status_returns_all_sections(
+        self, mock_analyzer_cls, executor
+    ):
+        """Test that periodization status returns phase, readiness, and deload."""
+        mock_analyzer_cls.return_value.get_periodization_summary.return_value = {
+            "phase": {"phase": "build"},
+            "readiness": {"score": 72},
+            "deload": {"recommended": False},
+        }
+        result = executor.get_periodization_status()
+        assert "phase" in result
+        assert result["phase"]["phase"] == "build"
+        assert "readiness" in result
+        assert result["readiness"]["score"] == 72
+        assert "deload" in result
+        assert result["deload"]["recommended"] is False
+
+    @pytest.mark.parametrize(
+        "ratio,expected",
+        [
+            (0.5, "detraining"),
+            (1.0, "optimal"),
+            (1.4, "building"),
+            (1.8, "high_risk"),
+            (None, "insufficient_data"),
+        ],
+    )
+    def test_get_training_load_risk_levels(
+        self, ratio, expected, mock_repo, mock_aggregator
+    ):
+        """Test that A:C ratio maps to correct risk assessment."""
+        mock_aggregator.get_training_load_trend.return_value = {
+            "acute_load_7d": 200 if ratio is not None else None,
+            "chronic_load_28d": 220 if ratio is not None else None,
+            "acute_chronic_ratio": ratio,
+            "week_change_pct": 5.0,
+            "by_type": {},
+        }
+        executor = ToolExecutor(mock_repo, mock_aggregator)
+        result = executor.get_training_load_analysis()
+        assert result["risk_assessment"] == expected
+
+
+class TestToolDescriptionQuality:
+    """Verify tool descriptions include prerequisite info."""
+
+    def test_hevy_tools_mention_hevy_in_description(self):
+        """Check that HEVY-dependent tools mention HEVY in their description."""
+        hevy_tools = {
+            "get_exercise_progression",
+            "get_workout_details",
+            "get_strength_training_summary",
+        }
+        for tool in TOOLS:
+            name = tool["function"]["name"]
+            if name in hevy_tools:
+                desc = tool["function"]["description"].lower()
+                assert "hevy" in desc, (
+                    f"Tool {name!r} description should mention HEVY"
+                )
+
+    def test_longitudinal_tool_mentions_multi_year(self):
+        """Check that get_longitudinal_summary mentions multi-year."""
+        for tool in TOOLS:
+            if tool["function"]["name"] == "get_longitudinal_summary":
+                desc = tool["function"]["description"].lower()
+                assert "multi-year" in desc, (
+                    "get_longitudinal_summary description should mention multi-year"
+                )
+                return
+        raise AssertionError("get_longitudinal_summary not in TOOLS")

@@ -1,5 +1,6 @@
 """CLI commands for garmin-sync."""
 
+import logging
 import warnings
 
 # Suppress cosmetic warning from mismatched transitive dependency versions.
@@ -8,6 +9,8 @@ import warnings
 warnings.filterwarnings("ignore", message="urllib3.*doesn't match a supported version")
 
 from datetime import date, timedelta
+
+logger = logging.getLogger(__name__)
 
 import typer
 from rich.console import Console
@@ -77,15 +80,65 @@ def _get_sync_manager():
     return SyncManager(db=db, console=console)
 
 
+def _show_dry_run_plan(days: int, force: bool, detailed: bool) -> None:
+    """Show what a sync would do without making API calls."""
+    try:
+        sync_manager = _get_sync_manager()
+        plan = sync_manager.dry_run_plan(days=days, force=force, detailed=detailed)
+
+        dr = plan["date_range"]
+        console.print(f"\n[bold]Sync Plan (dry run)[/bold]")
+        console.print(f"  Date range: {dr['start']} → {dr['end']} ({dr['days']} days)")
+        console.print(f"  Mode: {plan['mode']}{' + force' if plan['force'] else ''}")
+        console.print()
+
+        table = Table(title="Data Types")
+        table.add_column("Type", style="cyan")
+        table.add_column("Existing", justify="right")
+        table.add_column("To Fetch", justify="right")
+        table.add_column("Skipped", justify="right", style="dim")
+        table.add_column("API Calls", justify="right", style="yellow")
+
+        for dtype, info in plan["types"].items():
+            table.add_row(
+                dtype,
+                str(info.get("existing", "-")),
+                str(info.get("to_fetch", "-")),
+                str(info.get("fresh_skipped", "-")),
+                str(info.get("api_calls", "-")),
+            )
+
+        console.print(table)
+
+        console.print(f"\n  Estimated API calls: [yellow]{plan['estimated_api_calls']}[/yellow]")
+
+        hevy = plan.get("hevy", {})
+        if hevy.get("configured"):
+            console.print(f"  HEVY: [green]enabled[/green] (sync {hevy.get('sync_days', days)} days)")
+        else:
+            console.print(f"  HEVY: [dim]not configured[/dim]")
+
+        console.print()
+    except Exception as e:
+        console.print(f"[red]Dry run failed: {e}[/red]")
+        raise typer.Exit(1)
+
+
 @app.callback()
 def main(
     version: bool = typer.Option(
         None, "--version", "-v", callback=version_callback, is_eager=True,
         help="Show version and exit"
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-V", help="Enable debug logging for troubleshooting"
+    ),
 ):
     """Garmin Connect data sync and analysis tool."""
-    pass
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.WARNING,
+        format="%(name)s %(levelname)s: %(message)s",
+    )
 
 
 # ==================== Setup Wizard ====================
@@ -275,8 +328,13 @@ def sync_all_cmd(
     days: int = typer.Option(30, "--days", "-d", help="Days to sync"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-download existing data"),
     detailed: bool = typer.Option(False, "--detailed", help="Fetch full per-day data for rich reports (slower)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview sync plan without making API calls"),
 ):
     """Sync all data types from Garmin Connect (and HEVY if configured)."""
+    if dry_run:
+        _show_dry_run_plan(days=days, force=force, detailed=detailed)
+        raise typer.Exit(0)
+
     settings = get_settings()
     auth = get_auth_manager(settings.garth_token_dir)
 
@@ -371,8 +429,13 @@ def sync_all_cmd(
 def sync_activities_cmd(
     days: int = typer.Option(30, "--days", "-d", help="Days to sync"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-download existing data"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview sync plan without making API calls"),
 ):
     """Sync activities only."""
+    if dry_run:
+        _show_dry_run_plan(days=days, force=force, detailed=False)
+        raise typer.Exit(0)
+
     settings = get_settings()
     auth = get_auth_manager(settings.garth_token_dir)
 
@@ -408,8 +471,13 @@ def sync_health_cmd(
     days: int = typer.Option(30, "--days", "-d", help="Days to sync"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-download existing data"),
     detailed: bool = typer.Option(False, "--detailed", help="Fetch full per-day data for rich reports (slower)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview sync plan without making API calls"),
 ):
     """Sync health metrics only (sleep, HR, stress, HRV, body battery)."""
+    if dry_run:
+        _show_dry_run_plan(days=days, force=force, detailed=detailed)
+        raise typer.Exit(0)
+
     settings = get_settings()
     auth = get_auth_manager(settings.garth_token_dir)
 
@@ -801,6 +869,23 @@ def schedule_status_cmd():
         table.add_row("Weekday Time", status["schedule"]["weekday_time"] or "N/A")
         table.add_row("Weekend Time", status["schedule"]["weekend_time"] or "N/A")
 
+    # Next run time (macOS)
+    next_run = status.get("next_run")
+    if next_run:
+        table.add_row("Next Run", f"[green]{next_run}[/green]")
+
+    # Last exit status (macOS)
+    exit_status = status.get("last_exit_status")
+    if exit_status is not None:
+        exit_color = "green" if exit_status == 0 else "red"
+        table.add_row("Last Exit Status", f"[{exit_color}]{exit_status}[/{exit_color}]")
+
+    # Last sync age (macOS)
+    sync_age = status.get("last_sync_age")
+    if sync_age:
+        age_color = "yellow" if "d ago" in sync_age else "green"
+        table.add_row("Last Sync", f"[{age_color}]{sync_age}[/{age_color}]")
+
     # Show platform-specific details
     if "plist_path" in status:
         table.add_row("Plist Path", status["plist_path"])
@@ -825,7 +910,7 @@ def schedule_status_cmd():
             for line in lines[-5:]:
                 console.print(f"  {line}")
         except Exception:
-            pass
+            logger.debug("Could not read log file %s", log_file, exc_info=True)
 
 
 @schedule_app.command("logs")
@@ -937,6 +1022,19 @@ def _run_analysis() -> tuple[bool, str, str]:
     baseline_30d = generate_baseline_summary(weekly_json)
     detailed_7d = generate_detailed_7d(weekly_json)
 
+    # Ensure anomalies are present for the prompt — fallback to direct
+    # detection if generate_weekly_json failed silently.
+    if not detailed_7d.get("anomalies"):
+        try:
+            from garmin_sync.reports.anomaly_detector import AnomalyDetector
+            db = _get_database()
+            detector = AnomalyDetector(db)
+            anomalies = detector.detect_anomalies()
+            if anomalies:
+                detailed_7d["anomalies"] = anomalies
+        except Exception:
+            logger.debug("Anomaly fallback in _run_analysis failed", exc_info=True)
+
     # Load previous analyses for context (last 7 days)
     previous_analyses = []
     today = date.today()
@@ -947,7 +1045,7 @@ def _run_analysis() -> tuple[bool, str, str]:
             try:
                 previous_analyses.append(report_path.read_text())
             except Exception:
-                pass  # Skip unreadable files
+                logger.debug("Could not read previous analysis %s", report_path)
 
     # Get today's completed activities for template
     completed_today = _get_today_activities_summary()
@@ -961,7 +1059,7 @@ def _run_analysis() -> tuple[bool, str, str]:
             aggregator = DataAggregator(db)
             strength_data = aggregator.get_strength_volume_summary(days=7)
         except Exception:
-            pass  # Strength data is optional
+            logger.debug("Strength data fetch failed (optional)", exc_info=True)
 
     # Build prompt
     prompt = build_analysis_prompt(
@@ -1031,7 +1129,7 @@ def _earliest_available_year(default: int = 2021) -> int:
         if row and row["d"]:
             return int(row["d"][:4])
     except Exception:
-        pass
+        logger.warning("Could not determine earliest data year", exc_info=True)
     return default
 
 
@@ -1080,6 +1178,7 @@ def _run_longitudinal_analysis(
                 if prog and prog.get("sessions"):
                     strength[lift] = prog
             except Exception:
+                logger.debug("Lift progression failed for %s", lift)
                 continue
     longitudinal_data["strength"] = strength
 
@@ -1501,7 +1600,9 @@ def analyze_periodization_cmd():
 
 
 @analyze_app.command("post-sync-check", hidden=True)
-def analyze_post_sync_check_cmd():
+def analyze_post_sync_check_cmd(
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress macOS notification"),
+):
     """Run anomaly check and emit macOS notification (post-sync hook)."""
     import platform
     import subprocess
@@ -1532,6 +1633,21 @@ def analyze_post_sync_check_cmd():
         title = "garmin-sync: Sync Complete"
         body = "All metrics within normal ranges."
         sound = "default"
+
+    # Check config-based notification preference
+    if not quiet:
+        try:
+            from garmin_sync.ai.config import load_config
+            ai_config = load_config(settings.ai_config_path, settings.profile_path)
+            if hasattr(ai_config, "notifications_enabled") and not ai_config.notifications_enabled:
+                quiet = True
+        except Exception:
+            pass  # Config unavailable; default to sending notification
+
+    if quiet:
+        # Print to stdout so scheduler logs capture it
+        print(f"{title}: {body}")
+        return
 
     if platform.system() == "Darwin":
         # Escape double quotes to prevent AppleScript syntax errors.

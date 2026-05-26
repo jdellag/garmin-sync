@@ -1,10 +1,59 @@
 """MCP server for garmin-sync fitness data."""
 
+import functools
+import logging
+import sqlite3
+
 from mcp.server.fastmcp import FastMCP
 
 from garmin_sync.tools.executor import ToolExecutor
 
+logger = logging.getLogger(__name__)
+
 mcp = FastMCP("garmin-sync")
+
+
+# ---------------------------------------------------------------------------
+# Structured error handling for MCP tools
+# ---------------------------------------------------------------------------
+
+
+def _classify_mcp_error(e: Exception) -> tuple[str, str]:
+    """Map an exception to a (error_type, user_message) tuple.
+
+    The error_type lets the LLM suggest corrective actions (e.g. "run
+    sync_garmin_data" for SYNC_NEEDED).
+    """
+    msg = str(e).lower()
+    if isinstance(e, ValueError):
+        if "not configured" in msg or "not enabled" in msg:
+            return "AUTH_FAILED", str(e)
+        return "DATA_MISSING", str(e)
+    if isinstance(e, sqlite3.OperationalError):
+        return "SYNC_NEEDED", f"Database error: {e}. Try running sync_garmin_data first."
+    if isinstance(e, (ConnectionError, TimeoutError, OSError)):
+        return "NETWORK_ERROR", f"Connection failed: {type(e).__name__}"
+    return "INTERNAL", f"Internal error: {type(e).__name__}"
+
+
+def mcp_error_handler(func):
+    """Wrap MCP tool functions with structured error responses."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            error_type, message = _classify_mcp_error(e)
+            logger.warning("MCP tool %s failed: %s", func.__name__, e)
+            return {
+                "error": True,
+                "error_type": error_type,
+                "message": message,
+                "tool": func.__name__,
+            }
+
+    return wrapper
 
 # Lazy initialization
 _db = None
@@ -49,6 +98,7 @@ def _get_executor() -> ToolExecutor:
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_recent_activities(
     days: int = 7,
     activity_type: str | None = None,
@@ -72,6 +122,7 @@ def get_recent_activities(
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_recovery_status() -> dict:
     """Get current recovery metrics for training decisions.
 
@@ -84,6 +135,7 @@ def get_recovery_status() -> dict:
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_training_load_analysis() -> dict:
     """Analyze training load for injury prevention.
 
@@ -96,8 +148,9 @@ def get_training_load_analysis() -> dict:
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_strength_training_summary(days: int = 7) -> dict:
-    """Get HEVY strength training summary.
+    """Get HEVY strength training summary. Requires HEVY integration.
 
     Args:
         days: Days to analyze (default: 7)
@@ -110,8 +163,9 @@ def get_strength_training_summary(days: int = 7) -> dict:
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_exercise_progression(exercise_name: str, days: int = 90) -> dict:
-    """Track strength progression for a specific exercise.
+    """Track strength progression for a specific exercise. Requires HEVY integration; returns empty if not configured.
 
     Args:
         exercise_name: Exercise to track (e.g., "Bench Press", "Squat")
@@ -127,8 +181,9 @@ def get_exercise_progression(exercise_name: str, days: int = 90) -> dict:
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_workout_details(days: int = 7) -> list[dict]:
-    """Get detailed HEVY workouts with exercise and set breakdown.
+    """Get detailed HEVY workouts with exercise and set breakdown. Requires HEVY integration.
 
     Args:
         days: Days to look back (default: 7)
@@ -139,6 +194,7 @@ def get_workout_details(days: int = 7) -> list[dict]:
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_weekly_comparison() -> dict:
     """Compare this week vs last week across all metrics.
 
@@ -151,12 +207,15 @@ def get_weekly_comparison() -> dict:
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_longitudinal_summary(
     start_year: int | None = None,
     end_year: int | None = None,
     granularity: str = "year",
 ) -> dict:
     """Multi-year fitness review: aerobic efficiency, health baselines, volume, HR drift.
+
+    Requires multi-year synced data; returns sparse results if DB only has recent data.
 
     Args:
         start_year: First year to include (default: earliest year in DB).
@@ -173,6 +232,7 @@ def get_longitudinal_summary(
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_cardio_performance(days: int = 28) -> dict:
     """Get cardio performance metrics: running cadence trends, VO2 max
     progression, elevation summary, pacing consistency (CoV,
@@ -188,6 +248,7 @@ def get_cardio_performance(days: int = 28) -> dict:
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_anomaly_report() -> dict:
     """Scan recent health and training data for anomalies.
 
@@ -200,6 +261,7 @@ def get_anomaly_report() -> dict:
 
 
 @mcp.tool()
+@mcp_error_handler
 def get_periodization_status() -> dict:
     """Get current training phase, readiness score, and deload recommendation.
 
@@ -212,8 +274,12 @@ def get_periodization_status() -> dict:
 
 
 @mcp.tool()
+@mcp_error_handler
 def sync_garmin_data(days: int = 1) -> dict:
     """Sync latest data from Garmin Connect (and HEVY if configured).
+
+    Triggers activity, sleep, HR, HRV, stress, body battery, SpO2, and
+    respiration sync. For detailed per-day data use the CLI with --detailed.
 
     Args:
         days: Days to sync (default: 1 for today only)

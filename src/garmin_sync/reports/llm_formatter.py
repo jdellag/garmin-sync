@@ -1,7 +1,10 @@
 """LLM-friendly report formatting."""
 
+import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from garmin_sync.reports.aggregators import (
     ActivitySummary,
@@ -844,7 +847,8 @@ class LLMReportFormatter:
             if anomalies:
                 result["anomalies"] = anomalies
         except Exception:
-            pass
+            logger.debug("Anomaly detection failed in generate_weekly_json", exc_info=True)
+            result["anomaly_error"] = "Anomaly detection unavailable"
 
         return result
 
