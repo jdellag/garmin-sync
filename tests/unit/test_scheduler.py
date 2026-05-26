@@ -190,6 +190,52 @@ class TestLaunchdModule:
         assert status["schedule"]["weekend_time"] == "10:00 AM"
 
 
+class TestFormatHour:
+    """Test the _format_hour helper for 12-hour display."""
+
+    def test_midnight(self):
+        assert launchd._format_hour(0) == "12:00 AM"
+
+    def test_morning(self):
+        assert launchd._format_hour(7) == "7:00 AM"
+
+    def test_noon(self):
+        assert launchd._format_hour(12) == "12:00 PM"
+
+    def test_afternoon(self):
+        assert launchd._format_hour(14) == "2:00 PM"
+
+    def test_late_evening(self):
+        assert launchd._format_hour(22) == "10:00 PM"
+
+
+class TestGetLastSyncAge:
+    """Test _get_last_sync_age log parsing."""
+
+    def test_parses_date_with_3char_tz(self, tmp_path):
+        """Standard 3-char timezone like EDT."""
+        log = tmp_path / "sync.log"
+        log.write_text("Mon May 26 07:00:00 EDT 2026: Starting daily sync...\n")
+        result = launchd._get_last_sync_age(log)
+        assert result is not None
+
+    def test_parses_date_with_4char_tz(self, tmp_path):
+        """4-char timezone like AEST should still parse."""
+        log = tmp_path / "sync.log"
+        log.write_text("Mon May 26 07:00:00 AEST 2026: Starting daily sync...\n")
+        result = launchd._get_last_sync_age(log)
+        assert result is not None
+
+    def test_empty_log_returns_none(self, tmp_path):
+        log = tmp_path / "sync.log"
+        log.write_text("")
+        assert launchd._get_last_sync_age(log) is None
+
+    def test_missing_log_returns_none(self, tmp_path):
+        log = tmp_path / "sync.log"
+        assert launchd._get_last_sync_age(log) is None
+
+
 class TestScheduleCLI:
     """Test schedule CLI commands."""
 

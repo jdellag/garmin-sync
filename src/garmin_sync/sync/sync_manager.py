@@ -897,7 +897,7 @@ class SyncManager:
                 bb_existing += 1
             current += timedelta(days=1)
         import math
-        bb_chunks = math.ceil(days / 30)
+        bb_chunks = math.ceil((days + 1) / 30)
         plan["types"]["body_battery"] = {
             "existing": bb_existing,
             "to_fetch": days + 1,

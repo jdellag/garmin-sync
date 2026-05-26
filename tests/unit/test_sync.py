@@ -1003,8 +1003,11 @@ class TestDryRunPlan:
     def test_dry_run_no_api_calls_made(self, sync_manager):
         """dry_run_plan must not call any API methods."""
         plan = sync_manager.dry_run_plan(days=5)
-        # The mock client should have zero calls
-        sync_manager._client.assert_not_called()
+        # Verify no methods were called on the client (assert_not_called only
+        # checks direct invocation of the mock itself, not its methods)
+        assert not sync_manager._client.method_calls, (
+            f"Expected no API calls, got: {sync_manager._client.method_calls}"
+        )
         assert plan["estimated_api_calls"] > 0
 
     def test_dry_run_force_flag(self, sync_manager):

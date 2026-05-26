@@ -208,8 +208,8 @@ def get_status() -> dict:
                 weekend_hour = interval.get("Hour")
 
         status["schedule"] = {
-            "weekday_time": f"{weekday_hour}:00 AM" if weekday_hour else None,
-            "weekend_time": f"{weekend_hour}:00 AM" if weekend_hour else None,
+            "weekday_time": _format_hour(weekday_hour) if weekday_hour is not None else None,
+            "weekend_time": _format_hour(weekend_hour) if weekend_hour is not None else None,
         }
 
         # Compute next run time from schedule
@@ -268,6 +268,33 @@ def _compute_next_run(intervals: list[dict]) -> str | None:
     return next_fire.strftime("%Y-%m-%d %H:%M")
 
 
+def _try_parse_date(text: str) -> datetime | None:
+    """Try to parse a date string from $(date) or ISO format.
+
+    Python's ``strptime(%Z)`` only recognises the *current system's*
+    timezone abbreviations.  ``$(date)`` always uses the local timezone,
+    so on the machine that wrote the log this works.  But to be safe we
+    also try stripping the timezone token and parsing without it.
+    """
+    for fmt in ("%a %b %d %H:%M:%S %Z %Y", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except (ValueError, IndexError):
+            continue
+
+    # Fallback: strip the timezone token from BSD date(1) output.
+    # "Mon May 26 07:00:00 PDT 2026" → "Mon May 26 07:00:00 2026"
+    parts = text.split()
+    if len(parts) == 6:
+        no_tz = " ".join(parts[:4] + parts[5:])
+        try:
+            return datetime.strptime(no_tz, "%a %b %d %H:%M:%S %Y")
+        except (ValueError, IndexError):
+            pass
+
+    return None
+
+
 def _get_last_sync_age(log_path: Path) -> str | None:
     """Parse the last timestamp from the sync log and return a human-readable age."""
     if not log_path.exists():
@@ -279,25 +306,35 @@ def _get_last_sync_age(log_path: Path) -> str | None:
         if not text:
             return None
 
-        # Find the most recent line starting with a date-like pattern
-        # The bash wrapper writes: $(date) then garmin-sync output
+        # Find the most recent line starting with a date-like pattern.
+        # The bash wrapper writes: "$(date): Starting daily sync..."
+        # $(date) output length varies by timezone name (EDT=3, AEST=4, etc.)
         for line in reversed(text.splitlines()):
             line = line.strip()
             if not line:
                 continue
-            # Try common date formats from $(date)
-            for fmt in ("%a %b %d %H:%M:%S %Z %Y", "%Y-%m-%d %H:%M:%S"):
-                try:
-                    ts = datetime.strptime(line[:len(fmt) + 5], fmt)
-                    delta = datetime.now() - ts
-                    return _format_timedelta(delta)
-                except (ValueError, IndexError):
-                    continue
+            # Split on ": " to isolate the date prefix from the log message
+            date_part = line.split(": ", 1)[0] if ": " in line else line
+            ts = _try_parse_date(date_part)
+            if ts is not None:
+                delta = datetime.now() - ts
+                return _format_timedelta(delta)
 
     except Exception:
         logger.debug("Failed to parse sync log age", exc_info=True)
 
     return None
+
+
+def _format_hour(hour: int) -> str:
+    """Format a 24-hour integer as a 12-hour time string."""
+    if hour == 0:
+        return "12:00 AM"
+    if hour < 12:
+        return f"{hour}:00 AM"
+    if hour == 12:
+        return "12:00 PM"
+    return f"{hour - 12}:00 PM"
 
 
 def _format_timedelta(delta: timedelta) -> str:
