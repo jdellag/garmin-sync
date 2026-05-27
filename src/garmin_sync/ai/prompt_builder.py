@@ -201,14 +201,37 @@ def build_analysis_prompt(
             "",
         ])
 
-        # Volume by muscle group
+        # Volume by muscle group with weekly set targets
         by_muscle = strength_data.get("by_muscle_group", {})
         if by_muscle:
-            prompt_parts.append("Volume by muscle group:")
-            for group, data in sorted(by_muscle.items(), key=lambda x: x[1].get("volume_kg", 0), reverse=True):
+            # Load targets for groups that may not be in the strength_data
+            try:
+                from garmin_sync.ai.config import load_config
+                from garmin_sync.config import get_settings
+                _settings = get_settings()
+                _ai_cfg = load_config(_settings.ai_config_path, _settings.profile_path)
+                _strength_cfg = _ai_cfg.strength
+            except Exception:
+                from garmin_sync.ai.config import StrengthConfig
+                _strength_cfg = StrengthConfig()
+
+            prompt_parts.append("Volume by muscle group (actual/target sets per week):")
+            # Sort by descending volume, then include zero-actual groups at the end
+            trained = {g: d for g, d in by_muscle.items() if d.get("volume_kg", 0) or d.get("sets", 0)}
+            untrained = {g: d for g, d in by_muscle.items() if g not in trained}
+
+            for group, data in sorted(trained.items(), key=lambda x: x[1].get("volume_kg", 0), reverse=True):
                 volume_lbs = data.get("volume_kg", 0) * kg_to_lbs
                 sets = data.get("sets", 0)
-                prompt_parts.append(f"  - {group.title()}: {volume_lbs:,.0f} lbs ({sets} sets)")
+                target = _strength_cfg.get_target(group)
+                prompt_parts.append(f"  - {group.title()}: {volume_lbs:,.0f} lbs ({sets}/{target} sets)")
+
+            # Show untrained groups that have a target
+            for group in sorted(untrained):
+                target = _strength_cfg.get_target(group)
+                if target > 0:
+                    prompt_parts.append(f"  - {group.title()}: 0/{target} sets")
+
             prompt_parts.append("")
 
         # Recent workouts with exercise details

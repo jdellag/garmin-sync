@@ -232,12 +232,33 @@ class ToolExecutor:
 
         data = self.agg.get_strength_volume_summary(days=days)
 
+        # Load weekly set targets (science-backed defaults + user overrides)
+        try:
+            from garmin_sync.ai.config import load_config
+            from garmin_sync.config import get_settings
+            settings = get_settings()
+            ai_config = load_config(settings.ai_config_path, settings.profile_path)
+            strength_config = ai_config.strength
+        except Exception:
+            from garmin_sync.ai.config import StrengthConfig
+            strength_config = StrengthConfig()
+
         by_muscle = {}
         for group, info in data.get("by_muscle_group", {}).items():
             by_muscle[group] = {
                 "volume_lbs": round((info.get("volume_kg", 0) or 0) * KG_TO_LBS),
                 "sets": info.get("sets", 0),
+                "target_sets": strength_config.get_target(group),
             }
+
+        # Include groups with targets but zero actual sets
+        for group, target in strength_config.weekly_set_targets.items():
+            if group not in by_muscle:
+                by_muscle[group] = {
+                    "volume_lbs": 0,
+                    "sets": 0,
+                    "target_sets": target,
+                }
 
         result = {
             "configured": True,

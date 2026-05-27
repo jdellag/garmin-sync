@@ -858,3 +858,136 @@ class TestToolDescriptionQuality:
                 )
                 return
         raise AssertionError("get_longitudinal_summary not in TOOLS")
+
+
+class TestParallelToolCallLimit:
+    """Test that parallel tool calls respect the per-round limit."""
+
+    def test_parallel_tool_calls_respect_limit(self):
+        """When the model returns 4 parallel calls but max_tool_calls=2,
+        only the first 2 should be executed."""
+        from garmin_sync.ai.openai_client import chat_with_tools
+
+        # Build 4 parallel tool calls
+        tool_calls = []
+        for i in range(4):
+            tc = MagicMock()
+            tc.id = f"call_{i}"
+            tc.function.name = "get_recent_activities"
+            tc.function.arguments = '{"days": 7}'
+            tool_calls.append(tc)
+
+        first_response = MagicMock()
+        first_response.choices = [MagicMock()]
+        first_response.choices[0].message.content = None
+        first_response.choices[0].message.tool_calls = tool_calls
+
+        final_response = MagicMock()
+        final_response.choices = [MagicMock()]
+        final_response.choices[0].message.content = "Here are results"
+        final_response.choices[0].message.tool_calls = None
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [
+            first_response, final_response,
+        ]
+
+        mock_executor = MagicMock()
+        mock_executor.execute.return_value = [{"id": "1"}]
+
+        with patch("garmin_sync.ai.openai_client.OpenAI", return_value=mock_client):
+            result = chat_with_tools(
+                messages=[{"role": "user", "content": "Show activities"}],
+                tools=TOOLS,
+                api_key="test-key",
+                tool_executor=mock_executor,
+                max_tool_calls=2,
+            )
+
+        assert result == "Here are results"
+        assert mock_executor.execute.call_count == 2
+
+    def test_skipped_tools_get_error_results(self):
+        """Skipped tool calls (past the limit) get an error tool result
+        containing 'Tool call limit reached'."""
+        from garmin_sync.ai.openai_client import chat_with_tools
+
+        tool_calls = []
+        for i in range(4):
+            tc = MagicMock()
+            tc.id = f"call_{i}"
+            tc.function.name = "get_recent_activities"
+            tc.function.arguments = '{"days": 7}'
+            tool_calls.append(tc)
+
+        first_response = MagicMock()
+        first_response.choices = [MagicMock()]
+        first_response.choices[0].message.content = None
+        first_response.choices[0].message.tool_calls = tool_calls
+
+        final_response = MagicMock()
+        final_response.choices = [MagicMock()]
+        final_response.choices[0].message.content = "Done"
+        final_response.choices[0].message.tool_calls = None
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [
+            first_response, final_response,
+        ]
+
+        mock_executor = MagicMock()
+        mock_executor.execute.return_value = []
+
+        with patch("garmin_sync.ai.openai_client.OpenAI", return_value=mock_client):
+            chat_with_tools(
+                messages=[{"role": "user", "content": "Test"}],
+                tools=TOOLS,
+                api_key="test-key",
+                tool_executor=mock_executor,
+                max_tool_calls=2,
+            )
+
+        # The second API call should receive tool results for all 4 calls
+        second_call_messages = mock_client.chat.completions.create.call_args_list[1][1]["messages"]
+        tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
+        assert len(tool_messages) == 4
+
+        # The last 2 should contain the limit error
+        error_messages = [
+            m for m in tool_messages
+            if "Tool call limit reached" in m.get("content", "")
+        ]
+        assert len(error_messages) == 2
+
+
+class TestStrengthSummaryWithTargets:
+    """Test that get_strength_training_summary includes target_sets."""
+
+    def test_strength_summary_includes_target_sets(self):
+        """target_sets should be present in by_muscle_group entries."""
+        mock_repo = MagicMock()
+        mock_repo.get_hevy_workout_count.return_value = 3
+        mock_repo.get_recent_prs.return_value = []
+        mock_repo.db = MagicMock()
+
+        mock_agg = MagicMock()
+        mock_agg.get_strength_volume_summary.return_value = {
+            "total_sessions": 3,
+            "total_volume_kg": 5000,
+            "total_sets": 45,
+            "by_muscle_group": {"chest": {"volume_kg": 100, "sets": 9}},
+            "recent_workouts": [],
+        }
+        mock_agg.get_rpe_analysis.return_value = {
+            "rpe_coverage_pct": 0.0,
+        }
+        mock_agg.get_strength_prs.return_value = []
+
+        executor = ToolExecutor(mock_repo, mock_agg)
+        result = executor.get_strength_training_summary(days=7)
+
+        assert "by_muscle_group" in result
+        chest = result["by_muscle_group"]["chest"]
+        assert "target_sets" in chest
+        assert isinstance(chest["target_sets"], int)
+        assert chest["target_sets"] > 0

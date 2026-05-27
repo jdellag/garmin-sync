@@ -288,3 +288,42 @@ class TestMigration:
 
         assert result is False
         assert not profile_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Strength set targets
+# ---------------------------------------------------------------------------
+
+
+class TestStrengthTargets:
+    """Test that strength set targets load with defaults and user overrides."""
+
+    def test_strength_targets_load_defaults(self, config_path, profile_path):
+        """No [strength] section in profile means all defaults are used."""
+        _write_toml(config_path, {"openai": {"api_key": "sk-x"}})
+        _write_toml(profile_path, {
+            "training": {"schedule": "Mon: run"},
+        })
+
+        cfg = load_config(config_path, profile_path)
+
+        assert cfg.strength.weekly_set_targets["quadriceps"] == 10
+        assert cfg.strength.weekly_set_targets["biceps"] == 6
+        # Fallback for an unknown group
+        assert cfg.strength.get_target("unknown_group") == 6
+
+    def test_strength_targets_user_override_merges(self, config_path, profile_path):
+        """User overrides in [strength] merge on top of defaults."""
+        _write_toml(config_path, {"openai": {"api_key": "sk-x"}})
+        _write_toml(profile_path, {
+            "training": {"schedule": "Mon: run"},
+            "strength": {"quadriceps": 16, "upper_back": 14},
+        })
+
+        cfg = load_config(config_path, profile_path)
+
+        # Overridden values
+        assert cfg.strength.weekly_set_targets["quadriceps"] == 16
+        assert cfg.strength.weekly_set_targets["upper_back"] == 14
+        # Default preserved
+        assert cfg.strength.weekly_set_targets["chest"] == 10

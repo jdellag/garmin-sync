@@ -5,7 +5,15 @@ import sqlite3
 import pytest
 
 from garmin_sync.db.database import Database, SCHEMA_VERSION
-from garmin_sync.db.models import Activity, DailySummary, SleepDaily, SyncMetadata
+from garmin_sync.db.models import (
+    Activity,
+    DailySummary,
+    HeartRateDaily,
+    RespirationDaily,
+    SleepDaily,
+    SpO2Daily,
+    SyncMetadata,
+)
 from garmin_sync.db.repository import Repository
 
 
@@ -653,3 +661,211 @@ class TestSchemaMigration:
         assert db.get_schema_version() == 6
 
         db.close()
+
+
+class TestUpsertCoalesce:
+    """Test COALESCE semantics in upsert operations."""
+
+    @pytest.fixture
+    def repo(self):
+        """Create a repository with in-memory database."""
+        db = Database(":memory:")
+        db.initialize()
+        return Repository(db)
+
+    def test_activity_upsert_preserves_fit_fields_on_api_resync(self, repo):
+        """COALESCE columns (fit_file_path, hr_drift) survive a re-upsert where
+        the API-sourced row has None for those fields.  has_fit_file uses
+        COALESCE too, but since the dataclass default is False (-> 0 in SQL),
+        COALESCE sees a non-NULL 0 and picks it.  fit_file_path and hr_drift
+        default to None (-> NULL in SQL), so COALESCE falls through to the
+        existing row's value."""
+        activity = Activity(
+            activity_id="coalesce-1",
+            activity_type="running",
+            start_time="2024-06-01T07:00:00Z",
+            has_fit_file=True,
+            fit_file_path="/data/file.fit",
+            hr_drift=5.2,
+        )
+        repo.upsert_activity(activity)
+
+        # Simulate an API re-sync that doesn't know about FIT fields.
+        # fit_file_path=None and hr_drift=None map to SQL NULL so COALESCE
+        # preserves the originals.
+        resync = Activity(
+            activity_id="coalesce-1",
+            activity_type="running",
+            start_time="2024-06-01T07:00:00Z",
+            fit_file_path=None,
+            hr_drift=None,
+        )
+        repo.upsert_activity(resync)
+
+        retrieved = repo.get_activity("coalesce-1")
+        assert retrieved.fit_file_path == "/data/file.fit"
+        assert retrieved.hr_drift == pytest.approx(5.2)
+
+    def test_activity_upsert_updates_all_api_fields(self, repo):
+        """Direct-assignment columns update to new values on re-upsert."""
+        original = Activity(
+            activity_id="direct-1",
+            activity_type="running",
+            start_time="2024-06-01T07:00:00Z",
+            training_load=100.0,
+            vo2_max=45.5,
+            elevation_gain_meters=200.0,
+            training_effect_aerobic=3.5,
+        )
+        repo.upsert_activity(original)
+
+        updated = Activity(
+            activity_id="direct-1",
+            activity_type="running",
+            start_time="2024-06-01T07:00:00Z",
+            training_load=150.0,
+            vo2_max=48.0,
+            elevation_gain_meters=250.0,
+            training_effect_aerobic=4.0,
+        )
+        repo.upsert_activity(updated)
+
+        retrieved = repo.get_activity("direct-1")
+        assert retrieved.training_load == pytest.approx(150.0)
+        assert retrieved.vo2_max == pytest.approx(48.0)
+        assert retrieved.elevation_gain_meters == pytest.approx(250.0)
+        assert retrieved.training_effect_aerobic == pytest.approx(4.0)
+
+    def test_heart_rate_upsert_preserves_on_null_resync(self, repo):
+        """heart_rate_daily COALESCE preserves values when re-upserted with None."""
+        repo.upsert_heart_rate(HeartRateDaily(
+            date="2024-06-01", resting_hr=60, max_hr=180, min_hr=45,
+        ))
+
+        # Re-upsert with all None values
+        repo.upsert_heart_rate(HeartRateDaily(
+            date="2024-06-01", resting_hr=None, max_hr=None, min_hr=None,
+        ))
+
+        cursor = repo.db.connection.cursor()
+        cursor.execute("SELECT * FROM heart_rate_daily WHERE date = ?", ("2024-06-01",))
+        row = cursor.fetchone()
+        assert row["resting_hr"] == 60
+        assert row["max_hr"] == 180
+        assert row["min_hr"] == 45
+
+    def test_respiration_upsert_preserves_on_null_resync(self, repo):
+        """respiration_daily COALESCE preserves values when re-upserted with None."""
+        repo.upsert_respiration_daily(RespirationDaily(
+            date="2024-06-01", avg_respiration=15.0, max_respiration=20.0, min_respiration=12.0,
+        ))
+
+        repo.upsert_respiration_daily(RespirationDaily(
+            date="2024-06-01", avg_respiration=None, max_respiration=None, min_respiration=None,
+        ))
+
+        cursor = repo.db.connection.cursor()
+        cursor.execute("SELECT * FROM respiration_daily WHERE date = ?", ("2024-06-01",))
+        row = cursor.fetchone()
+        assert row["avg_respiration"] == pytest.approx(15.0)
+        assert row["max_respiration"] == pytest.approx(20.0)
+        assert row["min_respiration"] == pytest.approx(12.0)
+
+    def test_spo2_upsert_preserves_on_null_resync(self, repo):
+        """spo2_daily COALESCE preserves values when re-upserted with None."""
+        repo.upsert_spo2_daily(SpO2Daily(
+            date="2024-06-01", avg_spo2=97.0, min_spo2=94.0, max_spo2=99.0,
+        ))
+
+        repo.upsert_spo2_daily(SpO2Daily(
+            date="2024-06-01", avg_spo2=None, min_spo2=None, max_spo2=None,
+        ))
+
+        cursor = repo.db.connection.cursor()
+        cursor.execute("SELECT * FROM spo2_daily WHERE date = ?", ("2024-06-01",))
+        row = cursor.fetchone()
+        assert row["avg_spo2"] == pytest.approx(97.0)
+        assert row["min_spo2"] == pytest.approx(94.0)
+        assert row["max_spo2"] == pytest.approx(99.0)
+
+    def test_activity_fit_parsed_uses_max_semantics(self, repo):
+        """fit_parsed uses MAX(excluded, existing) so once set to True it sticks."""
+        activity = Activity(
+            activity_id="max-1",
+            activity_type="running",
+            start_time="2024-06-01T07:00:00Z",
+            fit_parsed=True,
+        )
+        repo.upsert_activity(activity)
+
+        # Re-upsert with fit_parsed=False (e.g. from API resync)
+        resync = Activity(
+            activity_id="max-1",
+            activity_type="running",
+            start_time="2024-06-01T07:00:00Z",
+            fit_parsed=False,
+        )
+        repo.upsert_activity(resync)
+
+        retrieved = repo.get_activity("max-1")
+        assert retrieved.fit_parsed is True
+
+    def test_sleep_upsert_preserves_stages_on_null_resync(self, repo):
+        """sleep_daily COALESCE preserves sleep stage fields on partial resync."""
+        repo.upsert_sleep(SleepDaily(
+            date="2024-06-01",
+            total_sleep_seconds=28800,
+            deep_sleep_seconds=7200,
+            rem_sleep_seconds=5400,
+            sleep_score=85,
+        ))
+
+        # Re-upsert with only the score (e.g. batch endpoint doesn't include stages)
+        repo.upsert_sleep(SleepDaily(
+            date="2024-06-01",
+            sleep_score=87,
+        ))
+
+        retrieved = repo.get_sleep("2024-06-01")
+        assert retrieved.deep_sleep_seconds == 7200
+        assert retrieved.rem_sleep_seconds == 5400
+        assert retrieved.total_sleep_seconds == 28800
+        assert retrieved.sleep_score == 87  # Updated to new value
+
+
+class TestSleepEpochConversion:
+    """Test SleepDaily.from_api_response epoch-millis conversion."""
+
+    def test_sleep_from_api_converts_epoch_millis(self):
+        """Epoch millisecond timestamps are converted to ISO 8601 strings."""
+        data = {
+            "dailySleepDTO": {
+                "calendarDate": "2024-01-25",
+                "sleepStartTimestampGMT": 1706223000000,
+                "sleepEndTimestampGMT": 1706252400000,
+                "sleepTimeSeconds": 28800,
+            },
+            "sleepScores": {"overall": {"value": 80, "qualifierKey": "GOOD"}},
+        }
+
+        sleep = SleepDaily.from_api_response(data)
+
+        assert isinstance(sleep.sleep_start, str)
+        assert "2024-01-25" in sleep.sleep_start
+        assert isinstance(sleep.sleep_end, str)
+        assert "2024-01-26" in sleep.sleep_end
+
+    def test_sleep_from_api_handles_none_epoch(self):
+        """Missing epoch fields produce None, not an error."""
+        data = {
+            "dailySleepDTO": {
+                "calendarDate": "2024-01-25",
+                "sleepTimeSeconds": 28800,
+            },
+            "sleepScores": {},
+        }
+
+        sleep = SleepDaily.from_api_response(data)
+
+        assert sleep.sleep_start is None
+        assert sleep.sleep_end is None

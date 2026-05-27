@@ -211,6 +211,19 @@ def chat_with_tools(
 
             # Execute each tool call
             for tool_call in message.tool_calls:
+                # Guard against parallel tool calls exceeding the limit
+                if tool_call_count >= max_tool_calls:
+                    working_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps({
+                            "error": "Tool call limit reached",
+                            "error_type": "ToolCallLimitExceeded",
+                            "tool": tool_call.function.name,
+                        }),
+                    })
+                    continue
+
                 tool_call_count += 1
                 tool_name = tool_call.function.name
                 arguments = json.loads(tool_call.function.arguments)

@@ -2266,3 +2266,46 @@ class TestLongitudinalAggregators:
         # Each year should have only the one long run; the 5 short runs are excluded.
         assert by_year["2023"]["n"] == 1
         assert by_year["2024"]["n"] == 1
+
+
+class TestHRDriftMedianEvenCount:
+    """Test HR drift median calculation with even number of values."""
+
+    @pytest.fixture
+    def db_even_drift(self):
+        """DB with 4 long runs in the same year, each with different hr_drift."""
+        db = Database(":memory:")
+        db.initialize()
+        repo = Repository(db)
+
+        drifts = [2.0, 4.0, 6.0, 8.0]
+        for i, drift in enumerate(drifts):
+            repo.upsert_activity(Activity(
+                activity_id=f"drift-{i}",
+                activity_type="running",
+                start_time=f"2024-0{i+1}-10T07:00:00Z",
+                duration_seconds=3600,  # 60 min, well above 45-min threshold
+                distance_meters=12000,
+                average_hr=145,
+            ))
+            # Set hr_drift via direct SQL (the upsert doesn't force-set it
+            # when the value comes from FIT parsing, but the column is on
+            # the model so this simulates a fully-populated row).
+            cursor = db.connection.cursor()
+            cursor.execute(
+                "UPDATE activities SET hr_drift = ? WHERE activity_id = ?",
+                (drift, f"drift-{i}"),
+            )
+        db.connection.commit()
+
+        return db
+
+    def test_hr_drift_median_even_count(self, db_even_drift):
+        """Median of [2.0, 4.0, 6.0, 8.0] should be 5.0 (average of two middle values)."""
+        agg = DataAggregator(db_even_drift)
+        result = agg.get_hr_drift_by_period(2024, 2024)
+
+        assert len(result["periods"]) == 1
+        period = result["periods"][0]
+        assert period["n"] == 4
+        assert period["median_drift_pct"] == 5.0

@@ -1548,10 +1548,10 @@ class DataAggregator:
         for row in cursor.fetchall():
             by_year.setdefault(row["year"], []).append(row["hr_drift"])
 
+        import statistics
         periods = []
         for year, drifts in sorted(by_year.items()):
-            drifts_sorted = sorted(drifts)
-            median = drifts_sorted[len(drifts_sorted) // 2]
+            median = statistics.median(drifts)
             periods.append({
                 "year": year,
                 "n": len(drifts),

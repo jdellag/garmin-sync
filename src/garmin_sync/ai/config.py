@@ -42,6 +42,43 @@ Saturday: Long run
 Sunday: Easy run or rest"""
 
 
+# Science-backed weekly set targets per muscle group (moderate general fitness).
+# Sources: Schoenfeld (2017), Renaissance Periodization volume landmarks.
+# Users can override any group in profile.toml [strength] section.
+DEFAULT_WEEKLY_SET_TARGETS: dict[str, int] = {
+    "quadriceps": 10,
+    "hamstrings": 8,
+    "glutes": 10,
+    "chest": 10,
+    "lats": 10,
+    "shoulders": 10,
+    "upper_back": 8,
+    "biceps": 6,
+    "triceps": 6,
+    "traps": 6,
+    "calves": 6,
+    "abdominals": 8,
+    "forearms": 4,
+    "adductors": 4,
+    "abductors": 4,
+    "lower_back": 4,
+}
+
+# Fallback for any muscle group not in the defaults
+_DEFAULT_FALLBACK_SETS = 6
+
+
+@dataclass
+class StrengthConfig:
+    """Configuration for strength training targets."""
+
+    weekly_set_targets: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_WEEKLY_SET_TARGETS))
+
+    def get_target(self, muscle_group: str) -> int:
+        """Get weekly set target for a muscle group."""
+        return self.weekly_set_targets.get(muscle_group, _DEFAULT_FALLBACK_SETS)
+
+
 @dataclass
 class HevyConfig:
     """Configuration for HEVY integration."""
@@ -67,6 +104,7 @@ class AIConfig:
     user_context: str = ""
     timezone: str = "America/New_York"
     hevy: HevyConfig = field(default_factory=HevyConfig)
+    strength: StrengthConfig = field(default_factory=StrengthConfig)
 
     def is_configured(self) -> bool:
         """Check if AI is properly configured with an API key."""
@@ -137,6 +175,14 @@ def load_config(
         sync_days=hevy_section.get("sync_days", 30),
     )
 
+    # Strength: merge user overrides from [strength] over defaults
+    strength_section = profile_data.get("strength", {})
+    merged_targets = dict(DEFAULT_WEEKLY_SET_TARGETS)
+    for group, sets in strength_section.items():
+        if isinstance(sets, int):
+            merged_targets[group] = sets
+    strength_config = StrengthConfig(weekly_set_targets=merged_targets)
+
     return AIConfig(
         api_key=api_key,
         model=openai_section.get("model", "o3-mini"),
@@ -146,6 +192,7 @@ def load_config(
         user_context=training_section.get("user_context", ""),
         timezone=training_section.get("timezone", "America/New_York"),
         hevy=hevy_config,
+        strength=strength_config,
     )
 
 
@@ -199,6 +246,13 @@ def save_config(
     # --- profile.toml (training profile) ---
     profile_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Only save strength overrides that differ from defaults
+    strength_overrides = {
+        group: sets
+        for group, sets in config.strength.weekly_set_targets.items()
+        if sets != DEFAULT_WEEKLY_SET_TARGETS.get(group, _DEFAULT_FALLBACK_SETS)
+    }
+
     profile_data = {
         "training": {
             "schedule": config.schedule,
@@ -206,6 +260,8 @@ def save_config(
             "timezone": config.timezone,
         },
     }
+    if strength_overrides:
+        profile_data["strength"] = strength_overrides
 
     with open(profile_path, "wb") as f:
         tomli_w.dump(profile_data, f)

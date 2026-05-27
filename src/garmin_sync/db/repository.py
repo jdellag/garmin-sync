@@ -196,11 +196,32 @@ class Repository:
                 ON CONFLICT(activity_id) DO UPDATE SET
                     activity_name = excluded.activity_name,
                     activity_type = excluded.activity_type,
+                    start_time = excluded.start_time,
+                    start_time_local = excluded.start_time_local,
+                    timezone = excluded.timezone,
                     duration_seconds = excluded.duration_seconds,
+                    moving_duration_seconds = excluded.moving_duration_seconds,
                     distance_meters = excluded.distance_meters,
+                    average_speed_mps = excluded.average_speed_mps,
+                    max_speed_mps = excluded.max_speed_mps,
                     average_hr = excluded.average_hr,
                     max_hr = excluded.max_hr,
+                    min_hr = excluded.min_hr,
+                    elevation_gain_meters = excluded.elevation_gain_meters,
+                    elevation_loss_meters = excluded.elevation_loss_meters,
                     calories = excluded.calories,
+                    training_effect_aerobic = excluded.training_effect_aerobic,
+                    training_effect_anaerobic = excluded.training_effect_anaerobic,
+                    training_load = excluded.training_load,
+                    vo2_max = excluded.vo2_max,
+                    avg_cadence = excluded.avg_cadence,
+                    max_cadence = excluded.max_cadence,
+                    average_power = excluded.average_power,
+                    max_power = excluded.max_power,
+                    normalized_power = excluded.normalized_power,
+                    device_name = excluded.device_name,
+                    has_fit_file = COALESCE(excluded.has_fit_file, activities.has_fit_file),
+                    fit_file_path = COALESCE(excluded.fit_file_path, activities.fit_file_path),
                     hr_drift = COALESCE(excluded.hr_drift, activities.hr_drift),
                     raw_json = excluded.raw_json,
                     fit_parsed = MAX(excluded.fit_parsed, activities.fit_parsed),
@@ -505,9 +526,9 @@ class Repository:
                     date, resting_hr, max_hr, min_hr, raw_json, updated_at
                 ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(date) DO UPDATE SET
-                    resting_hr = excluded.resting_hr,
-                    max_hr = excluded.max_hr,
-                    min_hr = excluded.min_hr,
+                    resting_hr = COALESCE(excluded.resting_hr, heart_rate_daily.resting_hr),
+                    max_hr = COALESCE(excluded.max_hr, heart_rate_daily.max_hr),
+                    min_hr = COALESCE(excluded.min_hr, heart_rate_daily.min_hr),
                     raw_json = excluded.raw_json,
                     updated_at = CURRENT_TIMESTAMP
                 """,
@@ -790,9 +811,9 @@ class Repository:
                     updated_at
                 ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(date) DO UPDATE SET
-                    avg_respiration = excluded.avg_respiration,
-                    max_respiration = excluded.max_respiration,
-                    min_respiration = excluded.min_respiration,
+                    avg_respiration = COALESCE(excluded.avg_respiration, respiration_daily.avg_respiration),
+                    max_respiration = COALESCE(excluded.max_respiration, respiration_daily.max_respiration),
+                    min_respiration = COALESCE(excluded.min_respiration, respiration_daily.min_respiration),
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -819,9 +840,9 @@ class Repository:
                     updated_at
                 ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(date) DO UPDATE SET
-                    avg_spo2 = excluded.avg_spo2,
-                    min_spo2 = excluded.min_spo2,
-                    max_spo2 = excluded.max_spo2,
+                    avg_spo2 = COALESCE(excluded.avg_spo2, spo2_daily.avg_spo2),
+                    min_spo2 = COALESCE(excluded.min_spo2, spo2_daily.min_spo2),
+                    max_spo2 = COALESCE(excluded.max_spo2, spo2_daily.max_spo2),
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (

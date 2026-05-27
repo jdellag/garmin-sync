@@ -1,8 +1,20 @@
 """Data models for Garmin data."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+
+
+def _epoch_ms_to_iso(val) -> Optional[str]:
+    """Convert epoch milliseconds to ISO 8601 UTC string, or None."""
+    if val is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(val) / 1000, tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+    except (ValueError, TypeError, OSError):
+        return None
 
 
 @dataclass
@@ -164,8 +176,8 @@ class SleepDaily:
         overall = sleep_scores.get("overall") or {}
         return cls(
             date=daily_sleep.get("calendarDate", ""),
-            sleep_start=daily_sleep.get("sleepStartTimestampGMT"),
-            sleep_end=daily_sleep.get("sleepEndTimestampGMT"),
+            sleep_start=_epoch_ms_to_iso(daily_sleep.get("sleepStartTimestampGMT")),
+            sleep_end=_epoch_ms_to_iso(daily_sleep.get("sleepEndTimestampGMT")),
             total_sleep_seconds=daily_sleep.get("sleepTimeSeconds"),
             deep_sleep_seconds=daily_sleep.get("deepSleepSeconds"),
             light_sleep_seconds=daily_sleep.get("lightSleepSeconds"),
