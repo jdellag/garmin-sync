@@ -2008,6 +2008,94 @@ def hevy_volume(
     console.print(table)
 
 
+@hevy_app.command("recalc-stl")
+def hevy_recalc_stl(
+    force: bool = typer.Option(False, "--force", help="Recalculate all, not just missing"),
+):
+    """Recompute Strength Training Load for existing workouts.
+
+    By default only processes workouts where training_load is NULL.
+    Use --force to recalculate all workouts.
+    """
+    from garmin_sync.db.database import Database
+    from garmin_sync.db.repository import Repository
+    from garmin_sync.reports.strength_load import compute_stl
+
+    settings = get_settings()
+    db = Database(settings.database_path)
+    db.initialize()
+    db.migrate()
+
+    cursor = db.connection.cursor()
+
+    # Find workouts to process
+    if force:
+        cursor.execute(
+            "SELECT id, duration_seconds FROM hevy_workouts ORDER BY start_time"
+        )
+    else:
+        cursor.execute(
+            "SELECT id, duration_seconds FROM hevy_workouts "
+            "WHERE training_load IS NULL ORDER BY start_time"
+        )
+    workouts = cursor.fetchall()
+
+    if not workouts:
+        console.print("[green]All workouts already have training load computed.[/green]")
+        return
+
+    console.print(f"Computing STL for {len(workouts)} workouts...")
+
+    updated = 0
+    skipped = 0
+
+    for w in workouts:
+        workout_id = w["id"]
+        duration = w["duration_seconds"]
+
+        # Fetch sets for this workout
+        cursor.execute(
+            """
+            SELECT hs.weight_kg, hs.reps, hs.rpe, hs.set_type, hs.is_pr,
+                   he.exercise_name
+            FROM hevy_sets hs
+            JOIN hevy_exercises he ON hs.exercise_id = he.id
+            WHERE he.workout_id = ?
+            """,
+            (workout_id,),
+        )
+        set_rows = cursor.fetchall()
+        sets = [
+            {
+                "weight_kg": r["weight_kg"],
+                "reps": r["reps"],
+                "rpe": r["rpe"],
+                "set_type": r["set_type"],
+                "is_pr": r["is_pr"],
+            }
+            for r in set_rows
+        ]
+
+        # Count distinct exercises
+        exercise_count = len({r["exercise_name"] for r in set_rows})
+
+        stl, method = compute_stl(sets, duration, exercise_count)
+
+        if stl is not None:
+            cursor.execute(
+                "UPDATE hevy_workouts SET training_load = ?, stl_method = ? WHERE id = ?",
+                (stl, method, workout_id),
+            )
+            updated += 1
+        else:
+            skipped += 1
+
+    db.connection.commit()
+    console.print(
+        f"[green]Done.[/green] Updated: {updated}, Skipped (no data): {skipped}"
+    )
+
+
 # ==================== MCP Commands ====================
 
 

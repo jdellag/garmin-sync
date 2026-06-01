@@ -108,6 +108,8 @@ class HevyWorkout:
     description: Optional[str] = None
     exercises: list[HevyExercise] = field(default_factory=list)
     raw_json: Optional[str] = None
+    training_load: Optional[float] = None
+    stl_method: Optional[str] = None  # "srpe" | "estimated"
 
     @classmethod
     def from_api_response(cls, data: dict) -> "HevyWorkout":

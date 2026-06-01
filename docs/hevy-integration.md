@@ -65,6 +65,32 @@ calves = 8
 
 See [Configuration](configuration.md) for the full default table.
 
+## Strength Training Load (STL)
+
+garmin-sync computes a Strength Training Load per HEVY workout using the sRPE method (session RPE x duration), the standard approach in exercise science for quantifying training stress across modalities (Foster et al., 2001).
+
+**How it works:**
+- When you log RPE in HEVY (50%+ of sets), the system uses your actual RPE data, volume-weighted by each set's weight x reps
+- When RPE isn't logged, it estimates session intensity from workout characteristics (PR flags, set types, volume, exercise count)
+- The computed STL is combined with Garmin's cardio training load (EPOC-based) for a unified A:C ratio, readiness score, and periodization analysis
+
+**Checking your STL:**
+
+Ask the AI coach: "What's my training load breakdown?" — it shows cardio vs. strength contributions.
+
+**Backfilling existing workouts:**
+
+```bash
+garmin-sync hevy recalc-stl           # Compute STL for workouts missing it
+garmin-sync hevy recalc-stl --force   # Recompute all workouts
+```
+
+New workouts get STL computed automatically during sync.
+
+**Important:** Combining Garmin's EPOC-based cardio load with sRPE-based strength load is scientifically approximate — the two metrics measure different physiological stresses but produce similar numerical ranges. The system always shows the cardio/strength breakdown alongside the combined total so you can see what's contributing.
+
+**Improving accuracy:** Logging RPE in HEVY gives the system your actual perceived effort rather than heuristic estimates. Even logging RPE on a few key exercises per session helps.
+
 ## Exercise progression
 
 The AI coach can track estimated 1RM progression for any exercise using the Epley formula. Ask in chat:

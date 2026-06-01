@@ -7,6 +7,7 @@ from typing import Optional
 
 from garmin_sync.hevy.client import HevyClient
 from garmin_sync.hevy.models import HevyExerciseTemplate, HevyWorkout
+from garmin_sync.reports.strength_load import compute_stl_from_workout
 
 
 @dataclass
@@ -74,6 +75,12 @@ class HevySyncManager:
                 try:
                     workout = HevyWorkout.from_api_response(workout_data)
                     workout.raw_json = json.dumps(workout_data)
+
+                    # Compute Strength Training Load (sRPE-based)
+                    stl, method = compute_stl_from_workout(workout)
+                    workout.training_load = stl
+                    workout.stl_method = method
+
                     self.repo.upsert_hevy_workout(workout)
                     result.records_synced += 1
                 except Exception as e:

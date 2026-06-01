@@ -1,6 +1,8 @@
 """Tests for Tier 2 analytics — RPE, stress-recovery, sleep-performance,
 monthly reports, personal records."""
 
+import os
+import time
 from datetime import date, timedelta
 
 import pytest
@@ -739,3 +741,186 @@ class TestToolEnrichments:
         # Real repo with no HEVY data — should return 0 sessions
         result = executor.get_strength_training_summary(days=7)
         assert result["total_sessions"] == 0
+
+
+class TestWeeklyLoadBucketing:
+    """Regression: get_weekly_load_history must bucket by distinct ISO weeks.
+
+    A prior bug used strftime('%%Y-%%W', ...). The doubled percent is a
+    literal in SQLite's strftime (not a printf-style escape), so every row
+    collapsed into a single bucket literally named '%Y-%W' — which made
+    _compute_weekly_trend always return 'insufficient_data' and
+    _count_overload_weeks always return 0 (deload could never fire).
+    """
+
+    def _seed_activity(self, db, activity_id, start_local, load):
+        cur = db.connection.cursor()
+        cur.execute(
+            "INSERT INTO activities (activity_id, start_time, start_time_local, "
+            "training_load, average_hr) VALUES (?, ?, ?, ?, ?)",
+            (activity_id, start_local, start_local, load, 140),
+        )
+        db.connection.commit()
+
+    def test_distinct_weeks_not_collapsed(self, agg, db):
+        today = date.today()
+        # Three activities, each exactly one ISO week apart.
+        for i, offset in enumerate((0, 7, 14)):
+            d = (today - timedelta(days=offset)).isoformat()
+            self._seed_activity(db, f"a{i}", f"{d}T08:00:00", 100.0 + i)
+
+        weeks = agg.get_weekly_load_history(today, weeks=6).get("weeks", [])
+
+        assert len(weeks) == 3, f"expected 3 distinct week buckets, got {len(weeks)}"
+        assert len({w["week_start"] for w in weeks}) == 3  # not fused into one
+
+
+class TestStrengthSummarySTLMatching:
+    """Regression: get_strength_training_summary must attach the stored STL
+    to every recent workout — including same-day workouts — matched by
+    workout id.
+
+    Prior bugs: (1) the end_date bound was a date-only string, which sorts
+    lexicographically before any same-day 'YYYY-MM-DDTHH:...' timestamp and
+    dropped today's workouts; (2) matching by title cross-assigned STL when
+    two workouts shared a title (e.g. 'Push Day').
+    """
+
+    @pytest.fixture
+    def executor(self, repo, agg):
+        from garmin_sync.tools.executor import ToolExecutor
+        return ToolExecutor(repo, agg)
+
+    def _seed_workout(self, db, wid, title, start_time, load, method):
+        cur = db.connection.cursor()
+        cur.execute(
+            "INSERT INTO hevy_workouts (id, title, start_time, duration_seconds, "
+            "volume_kg, training_load, stl_method) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (wid, title, start_time, 3600, 5000.0, load, method),
+        )
+        ex = _seed_hevy_exercise(db, wid, "Bench Press", "chest")
+        _seed_hevy_set(db, ex, 60.0, 10)
+        db.connection.commit()
+
+    def test_stl_attached_by_id_today_and_colliding_titles(self, executor, db):
+        today = date.today()
+        yesterday = today - timedelta(days=1)
+        # Two workouts share the title "Push Day"; one is TODAY.
+        self._seed_workout(
+            db, "wA", "Push Day", f"{today.isoformat()}T10:00:00+00:00", 275.0, "srpe"
+        )
+        self._seed_workout(
+            db, "wB", "Push Day",
+            f"{yesterday.isoformat()}T10:00:00+00:00", 90.0, "estimated",
+        )
+
+        summary = executor.get_strength_training_summary(days=7)
+        by_id = {w["id"]: w for w in summary["recent_workouts"]}
+
+        # Today's workout is present and carries its OWN stored STL.
+        assert "wA" in by_id, "same-day workout was dropped from the summary"
+        assert by_id["wA"]["training_load"] == 275.0
+        assert by_id["wA"]["stl_method"] == "srpe"
+        # Colliding title did not cross-assign the other workout's STL.
+        assert by_id["wB"]["training_load"] == 90.0
+        assert by_id["wB"]["stl_method"] == "estimated"
+
+
+class TestACOverloadBaselineGuard:
+    """Regression: overload anomalies must NOT fire on a single session with
+    no chronic baseline (all load inside the last 7 days), where the A:C ratio
+    is structurally ~4 and meaningless. They MUST still fire on a genuine spike
+    that sits on top of an established baseline. Applies to cardio and strength.
+    """
+
+    def _seed_hevy(self, db, wid, dstr, load):
+        cur = db.connection.cursor()
+        cur.execute(
+            "INSERT INTO hevy_workouts (id, title, start_time, training_load, "
+            "stl_method) VALUES (?, ?, ?, ?, ?)",
+            (wid, "W", f"{dstr}T12:00:00+00:00", load, "srpe"),
+        )
+        db.connection.commit()
+
+    def _seed_activity(self, db, aid, dstr, load):
+        cur = db.connection.cursor()
+        cur.execute(
+            "INSERT INTO activities (activity_id, start_time, start_time_local, "
+            "training_load) VALUES (?, ?, ?, ?)",
+            (aid, f"{dstr}T12:00:00", f"{dstr}T12:00:00", load),
+        )
+        db.connection.commit()
+
+    def test_strength_single_session_suppressed(self, db):
+        from garmin_sync.reports.anomaly_detector import AnomalyDetector
+        today = date(2026, 5, 31)
+        self._seed_hevy(db, "s1", today.isoformat(), 120.0)  # only the last week
+        assert AnomalyDetector(db)._check_strength_overload(today) == []
+
+    def test_strength_spike_with_baseline_fires(self, db):
+        from garmin_sync.reports.anomaly_detector import AnomalyDetector
+        today = date(2026, 5, 31)
+        self._seed_hevy(db, "s1", (today - timedelta(days=20)).isoformat(), 60.0)
+        self._seed_hevy(db, "s2", (today - timedelta(days=13)).isoformat(), 60.0)
+        self._seed_hevy(db, "s3", today.isoformat(), 320.0)  # spike on a baseline
+        fired = [a for a in AnomalyDetector(db)._check_strength_overload(today)
+                 if a["check"] == "strength_overload"]
+        assert len(fired) == 1
+
+    def test_cardio_single_session_suppressed(self, db):
+        from garmin_sync.reports.anomaly_detector import AnomalyDetector
+        today = date(2026, 5, 31)
+        self._seed_activity(db, "c1", today.isoformat(), 300.0)
+        fired = [a for a in AnomalyDetector(db)._check_training_overload(today)
+                 if a["check"] == "training_overload"]
+        assert fired == []
+
+    def test_cardio_spike_with_baseline_fires(self, db):
+        from garmin_sync.reports.anomaly_detector import AnomalyDetector
+        today = date(2026, 5, 31)
+        self._seed_activity(db, "c1", (today - timedelta(days=20)).isoformat(), 80.0)
+        self._seed_activity(db, "c2", (today - timedelta(days=13)).isoformat(), 80.0)
+        self._seed_activity(db, "c3", today.isoformat(), 420.0)
+        fired = [a for a in AnomalyDetector(db)._check_training_overload(today)
+                 if a["check"] == "training_overload"]
+        assert len(fired) == 1
+
+
+class TestHevyWeeklyLocalBucketing:
+    """Regression: get_weekly_load_history must bucket HEVY workouts (stored in
+    UTC) by LOCAL time, matching how activities bucket by start_time_local — so
+    a late-evening lift and a same-evening cardio session land in one ISO week.
+    """
+
+    @pytest.mark.skipif(not hasattr(time, "tzset"), reason="tzset() unavailable")
+    def test_late_evening_lift_buckets_with_local_cardio(self, agg, db):
+        old_tz = os.environ.get("TZ")
+        os.environ["TZ"] = "America/New_York"
+        time.tzset()
+        try:
+            cur = db.connection.cursor()
+            # Sunday 2026-05-31, 22:00 ET. Cardio stores local wall-clock.
+            cur.execute(
+                "INSERT INTO activities (activity_id, start_time, start_time_local, "
+                "training_load, average_hr) VALUES (?, ?, ?, ?, ?)",
+                ("c1", "2026-06-01T02:00:00", "2026-05-31T22:00:00", 100.0, 140),
+            )
+            # Same instant lift; HEVY stores UTC (02:00 Mon UTC == 22:00 Sun ET).
+            cur.execute(
+                "INSERT INTO hevy_workouts (id, title, start_time, training_load, "
+                "stl_method) VALUES (?, ?, ?, ?, ?)",
+                ("h1", "Leg Day", "2026-06-01T02:00:00+00:00", 300.0, "srpe"),
+            )
+            db.connection.commit()
+
+            weeks = agg.get_weekly_load_history(date(2026, 6, 6), weeks=6)["weeks"]
+
+            assert len(weeks) == 1, "lift and cardio split into different ISO weeks"
+            assert weeks[0]["cardio_load"] == 100.0
+            assert weeks[0]["strength_load"] == 300.0
+        finally:
+            if old_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old_tz
+            time.tzset()

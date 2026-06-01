@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Generator
 
 # Schema version for migrations
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -227,6 +227,8 @@ CREATE TABLE IF NOT EXISTS hevy_workouts (
     set_count INTEGER,
     rep_count INTEGER,
     exercise_count INTEGER,
+    training_load REAL,
+    stl_method TEXT,
     raw_json TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -494,6 +496,9 @@ class Database:
 
         if current_version < 6:
             self._migrate_v5_to_v6()
+
+        if current_version < 7:
+            self._migrate_v6_to_v7()
 
         # Safety net: if version was recorded as 6 by a previous
         # initialize() call but the v5→v6 migration never actually
@@ -778,5 +783,36 @@ class Database:
         cursor.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
             (6,)
+        )
+        self.connection.commit()
+
+    def _migrate_v6_to_v7(self) -> None:
+        """Add training_load and stl_method columns to hevy_workouts.
+
+        These store the computed Strength Training Load (sRPE-based)
+        per workout, enabling unified cardio+strength load metrics.
+        """
+        cursor = self.connection.cursor()
+
+        # Check if hevy_workouts table exists (HEVY may never have been configured)
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='hevy_workouts'"
+        )
+        if cursor.fetchone():
+            cursor.execute("PRAGMA table_info(hevy_workouts)")
+            columns = {row[1] for row in cursor.fetchall()}
+
+            if "training_load" not in columns:
+                cursor.execute(
+                    "ALTER TABLE hevy_workouts ADD COLUMN training_load REAL"
+                )
+            if "stl_method" not in columns:
+                cursor.execute(
+                    "ALTER TABLE hevy_workouts ADD COLUMN stl_method TEXT"
+                )
+
+        cursor.execute(
+            "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
+            (7,)
         )
         self.connection.commit()

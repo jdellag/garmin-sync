@@ -632,7 +632,11 @@ class DataAggregator:
         result = {
             "acute_load_7d": None,
             "chronic_load_28d": None,
+            "chronic_baseline_load": None,
             "acute_chronic_ratio": None,
+            "cardio_load_7d": None,
+            "strength_load_7d": None,
+            "strength_pct_of_total": None,
             "this_week_load": None,
             "prev_week_load": None,
             "week_change_pct": None,
@@ -643,35 +647,102 @@ class DataAggregator:
             "training_effect_balance": None,
         }
 
-        # Get 28 days of training load data
+        # Get 28 days of training load data — UNION cardio + strength
         start_28d = end_date - timedelta(days=27)
+        sd = start_28d.isoformat()
+        ed = end_date.isoformat()
+
+        # Check if hevy_workouts table exists (HEVY may not be configured)
         cursor.execute(
-            """
-            SELECT
-                date(start_time) as activity_date,
-                activity_type,
-                training_load,
-                training_effect_aerobic,
-                training_effect_anaerobic,
-                activity_name
-            FROM activities
-            WHERE date(start_time) >= ? AND date(start_time) <= ?
-                AND training_load IS NOT NULL
-            ORDER BY start_time DESC
-            """,
-            (start_28d.isoformat(), end_date.isoformat())
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='hevy_workouts'"
         )
-        rows = cursor.fetchall()
+        has_hevy = cursor.fetchone() is not None
+
+        if has_hevy:
+            cursor.execute(
+                """
+                SELECT activity_date, source, activity_type, training_load,
+                       training_effect_aerobic, training_effect_anaerobic,
+                       activity_name
+                FROM (
+                    SELECT date(start_time) as activity_date,
+                           'garmin' as source,
+                           activity_type,
+                           training_load,
+                           training_effect_aerobic,
+                           training_effect_anaerobic,
+                           activity_name
+                    FROM activities
+                    WHERE date(start_time) >= ? AND date(start_time) <= ?
+                        AND training_load IS NOT NULL
+
+                    UNION ALL
+
+                    SELECT date(start_time) as activity_date,
+                           'hevy' as source,
+                           'strength_training' as activity_type,
+                           training_load,
+                           NULL as training_effect_aerobic,
+                           NULL as training_effect_anaerobic,
+                           title as activity_name
+                    FROM hevy_workouts
+                    WHERE date(start_time) >= ? AND date(start_time) <= ?
+                        AND training_load IS NOT NULL
+                )
+                ORDER BY activity_date DESC
+                """,
+                (sd, ed, sd, ed),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT date(start_time) as activity_date,
+                       'garmin' as source,
+                       activity_type,
+                       training_load,
+                       training_effect_aerobic,
+                       training_effect_anaerobic,
+                       activity_name
+                FROM activities
+                WHERE date(start_time) >= ? AND date(start_time) <= ?
+                    AND training_load IS NOT NULL
+                ORDER BY start_time DESC
+                """,
+                (sd, ed),
+            )
+        # Convert to dicts so downstream code can use .get() safely
+        rows = [dict(r) for r in cursor.fetchall()]
 
         if not rows:
             return result
 
-        # Calculate acute (7-day) load
+        # Calculate acute (7-day) load with cardio/strength breakdown
         start_7d = end_date - timedelta(days=6)
         acute_loads = [r["training_load"] for r in rows
                        if r["activity_date"] >= start_7d.isoformat() and r["training_load"]]
         if acute_loads:
             result["acute_load_7d"] = round(sum(acute_loads), 1)
+
+        # Breakdown by source (cardio vs strength)
+        cardio_7d = sum(
+            r["training_load"] for r in rows
+            if r["activity_date"] >= start_7d.isoformat()
+            and r["training_load"]
+            and r.get("source") != "hevy"
+        )
+        strength_7d = sum(
+            r["training_load"] for r in rows
+            if r["activity_date"] >= start_7d.isoformat()
+            and r["training_load"]
+            and r.get("source") == "hevy"
+        )
+        if cardio_7d or strength_7d:
+            result["cardio_load_7d"] = round(cardio_7d, 1)
+            result["strength_load_7d"] = round(strength_7d, 1)
+            total = cardio_7d + strength_7d
+            result["strength_pct_of_total"] = (
+                round((strength_7d / total) * 100, 1) if total > 0 else 0
+            )
 
         # Calculate chronic (28-day) weekly average
         all_loads = [r["training_load"] for r in rows if r["training_load"]]
@@ -679,6 +750,14 @@ class DataAggregator:
             total_28d = sum(all_loads)
             # Calculate as weekly average (total / 4 weeks)
             result["chronic_load_28d"] = round(total_28d / 4, 1)
+
+        # Chronic baseline = load accrued BEFORE the acute 7d window (days 8-28).
+        # When this is zero, all training sits in the last week, so the A:C
+        # ratio is structurally ~4 and meaningless — consumers use this to
+        # suppress overload alarms for users without an established baseline.
+        baseline_loads = [r["training_load"] for r in rows
+                          if r["activity_date"] < start_7d.isoformat() and r["training_load"]]
+        result["chronic_baseline_load"] = round(sum(baseline_loads), 1) if baseline_loads else 0
 
         # Calculate A:C ratio
         if result["acute_load_7d"] and result["chronic_load_28d"] and result["chronic_load_28d"] > 0:
@@ -800,26 +879,75 @@ class DataAggregator:
         sd = start.isoformat()
         ed = end_date.isoformat()
 
+        # Check if hevy_workouts table exists
         cursor.execute(
-            """
-            SELECT strftime('%%Y-%%W', start_time_local) AS yw,
-                   MIN(date(start_time_local)) AS week_start,
-                   SUM(COALESCE(training_load, 0)) AS total_load,
-                   COUNT(*) AS count,
-                   AVG(average_hr) AS avg_hr
-            FROM activities
-            WHERE date(start_time_local) BETWEEN ? AND ?
-            GROUP BY yw
-            ORDER BY yw ASC
-            """,
-            (sd, ed),
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='hevy_workouts'"
         )
+        has_hevy = cursor.fetchone() is not None
+
+        if has_hevy:
+            cursor.execute(
+                """
+                SELECT yw, MIN(week_start) AS week_start,
+                       SUM(training_load) AS total_load,
+                       SUM(CASE WHEN source = 'garmin' THEN training_load ELSE 0 END) AS cardio_load,
+                       SUM(CASE WHEN source = 'hevy' THEN training_load ELSE 0 END) AS strength_load,
+                       COUNT(*) AS count,
+                       AVG(avg_hr) AS avg_hr
+                FROM (
+                    SELECT strftime('%Y-%W', start_time_local) AS yw,
+                           date(start_time_local) AS week_start,
+                           'garmin' AS source,
+                           COALESCE(training_load, 0) AS training_load,
+                           average_hr AS avg_hr
+                    FROM activities
+                    WHERE date(start_time_local) BETWEEN ? AND ?
+
+                    UNION ALL
+
+                    -- HEVY stores start_time in UTC; activities bucket by
+                    -- local wall-clock (start_time_local).  Convert HEVY to
+                    -- local time so a late-evening lift lands in the same ISO
+                    -- week as a same-evening cardio session.
+                    SELECT strftime('%Y-%W', datetime(start_time, 'localtime')) AS yw,
+                           date(datetime(start_time, 'localtime')) AS week_start,
+                           'hevy' AS source,
+                           COALESCE(training_load, 0) AS training_load,
+                           NULL AS avg_hr
+                    FROM hevy_workouts
+                    WHERE date(datetime(start_time, 'localtime')) BETWEEN ? AND ?
+                        AND training_load IS NOT NULL
+                )
+                GROUP BY yw
+                ORDER BY yw ASC
+                """,
+                (sd, ed, sd, ed),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT strftime('%Y-%W', start_time_local) AS yw,
+                       MIN(date(start_time_local)) AS week_start,
+                       SUM(COALESCE(training_load, 0)) AS total_load,
+                       0 AS cardio_load,
+                       0 AS strength_load,
+                       COUNT(*) AS count,
+                       AVG(average_hr) AS avg_hr
+                FROM activities
+                WHERE date(start_time_local) BETWEEN ? AND ?
+                GROUP BY yw
+                ORDER BY yw ASC
+                """,
+                (sd, ed),
+            )
         rows = cursor.fetchall()
 
         week_list = [
             {
                 "week_start": r["week_start"],
                 "total_load": round(r["total_load"], 1),
+                "cardio_load": round(r["cardio_load"], 1) if r["cardio_load"] else 0,
+                "strength_load": round(r["strength_load"], 1) if r["strength_load"] else 0,
                 "count": r["count"],
                 "avg_hr": round(r["avg_hr"], 1) if r["avg_hr"] else None,
             }
@@ -1218,6 +1346,7 @@ class DataAggregator:
                     })
 
             result["recent_workouts"].append({
+                "id": workout_id,
                 "date": utc_to_local_date(workout_row["start_time"]),
                 "title": workout_row["title"],
                 "volume_kg": workout_row["volume_kg"],

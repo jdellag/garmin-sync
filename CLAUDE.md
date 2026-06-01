@@ -23,8 +23,8 @@ src/garmin_sync/
 │   └── fit_parser.py       # FIT file parsing & HR drift calculation
 ├── hevy/                   # HEVY strength training integration
 │   ├── client.py           # HEVY API wrapper
-│   ├── models.py           # HevyWorkout, HevyExercise, HevySet dataclasses
-│   └── sync.py             # HEVY sync manager
+│   ├── models.py           # HevyWorkout, HevyExercise, HevySet dataclasses (+ training_load, stl_method)
+│   └── sync.py             # HEVY sync manager (computes STL at sync time)
 ├── tools/                  # Shared tool executor (used by MCP + OpenAI)
 │   └── executor.py         # ToolExecutor class - 12 fitness data tools
 ├── mcp/                    # Model Context Protocol server
@@ -41,9 +41,10 @@ src/garmin_sync/
 │   ├── launchd.py          # macOS launchd plist management
 │   └── windows_task.py     # Windows Task Scheduler via schtasks.exe
 └── reports/
-    ├── aggregators.py      # SQL aggregation queries (30 public methods)
-    ├── anomaly_detector.py # AnomalyDetector: 9 health/training anomaly checks
-    ├── periodization.py    # PeriodizationAnalyzer: phase detection, readiness, deload
+    ├── aggregators.py      # SQL aggregation queries (30 public methods; UNION ALL cardio+strength load)
+    ├── anomaly_detector.py # AnomalyDetector: 10 health/training anomaly checks (incl. strength overload)
+    ├── periodization.py    # PeriodizationAnalyzer: phase detection, readiness (6-component w/ HEVY), deload
+    ├── strength_load.py    # STL calculator: sRPE-based strength training load (hybrid RPE/estimation)
     ├── llm_formatter.py    # Markdown report formatting
     └── report_generator.py # Report coordination & export
 ```
@@ -61,7 +62,8 @@ src/garmin_sync/
 | `mcp/server.py` | MCP server configuration |
 | `ai/chat.py` | Chat behavior, context building |
 | `ai/openai_client.py` | OpenAI API calls, system messages |
-| `aggregators.py` | Adding computed analytics |
+| `aggregators.py` | Adding computed analytics (training load queries UNION cardio+strength) |
+| `reports/strength_load.py` | STL calculation (scale factor, RPE estimation heuristics, coverage threshold) |
 | `database.py` | Schema changes (increment SCHEMA_VERSION) |
 | `models.py` | New data types |
 | `repository.py` | Database operations (COALESCE upserts, update `_ALLOWED_DAILY_TABLES` when adding tables) |
@@ -117,7 +119,7 @@ pytest tests/unit/test_mcp.py        # MCP tests
 pytest --cov=garmin_sync             # With coverage
 ```
 
-**686 tests** covering all modules.
+**712 tests** covering all modules.
 
 ## Gotchas
 
@@ -144,3 +146,6 @@ pytest --cov=garmin_sync             # With coverage
 21. **MCP structured errors**: MCP tools return structured error responses with `error_type` classification (DATA_MISSING, SYNC_NEEDED, AUTH_FAILED, INTERNAL) and `suggestion` fields. The `_mcp_error_handler` decorator in `mcp/server.py` wraps all tool functions.
 22. **Schedule status enrichment**: `schedule status` on macOS shows next scheduled run time, last exit code, and sync age via `launchctl print` parsing. The `_try_parse_date()` helper handles timezone abbreviation differences across platforms.
 23. **Module-level logging**: All modules use `logging.getLogger(__name__)`. The `--verbose`/`-V` CLI flag sets the root logger to DEBUG.
+24. **Strength Training Load (STL)**: `reports/strength_load.py` computes per-workout load via sRPE method (session RPE × duration). Falls back to estimation heuristics when RPE not logged. Stored as `training_load` + `stl_method` on `hevy_workouts`. UNION ALL'd with Garmin's EPOC-based load in `get_training_load_trend()` and `get_weekly_load_history()` for combined A:C ratio. Science note: mixing EPOC with sRPE is approximate — always surface the cardio/strength breakdown alongside headline totals.
+25. **STL backfill**: Existing HEVY workouts need `garmin-sync hevy recalc-stl` to populate `training_load`. New syncs compute STL automatically. Same pattern as `fit-reparse` for FIT files.
+26. **Readiness score redistribution**: When HEVY data exists, readiness scoring uses 6 components (HRV 20, Sleep 20, BB 20, RHR 15, A:C 15, Strength Fatigue 10). Without HEVY, original 5-component weights are used (HRV 25, Sleep 20, BB 20, RHR 15, A:C 20). The conditional is in `calculate_readiness_score()`.

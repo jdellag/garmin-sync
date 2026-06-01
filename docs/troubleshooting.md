@@ -69,6 +69,15 @@ Run `garmin-sync sync fit-reparse` to re-process existing FIT files for laps, pe
 **HEVY sync fails:**
 Verify your API key with `garmin-sync hevy status`. HEVY API access requires a Pro subscription.
 
+**Training load doesn't include strength workouts:**
+Existing HEVY workouts need their Strength Training Load (STL) computed. Run:
+```bash
+garmin-sync hevy recalc-stl
+```
+
+**STL values seem too high or low:**
+The system uses estimated RPE (base 5.0 with adjustments) when RPE isn't logged in HEVY. Logging RPE on your sets improves accuracy. If values are systematically off, the `STL_SCALE_FACTOR` in `reports/strength_load.py` can be adjusted.
+
 ## Scheduling
 
 **Scheduled sync not running:**

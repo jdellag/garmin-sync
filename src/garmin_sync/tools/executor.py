@@ -199,10 +199,20 @@ class ToolExecutor:
         else:
             risk = "high_risk"
 
+        # Determine STL confidence from recent workouts
+        stl_confidence = None
+        strength_7d = load.get("strength_load_7d")
+        if strength_7d and strength_7d > 0:
+            stl_confidence = self._get_stl_confidence()
+
         return {
             "acute_load_7d": load.get("acute_load_7d"),
             "chronic_load_28d": load.get("chronic_load_28d"),
             "acute_chronic_ratio": ac,
+            "cardio_load_7d": load.get("cardio_load_7d"),
+            "strength_load_7d": load.get("strength_load_7d"),
+            "strength_pct_of_total": load.get("strength_pct_of_total"),
+            "stl_confidence": stl_confidence,
             "week_change_pct": load.get("week_change_pct"),
             "by_activity_type": load.get("by_type", {}),
             "risk_assessment": risk,
@@ -278,12 +288,59 @@ class ToolExecutor:
                 "overreaching_flag": rpe_data.get("overreaching_flag", False),
             }
 
+        # Add training load per recent workout (match by workout id).
+        # No end_date bound: get_hevy_workouts filters start_time <= end_date
+        # lexicographically, and a date-only bound like "2026-05-31" sorts
+        # before any "2026-05-31T..." timestamp, which would drop same-day
+        # workouts. The start_date lower bound + limit already scope this.
+        try:
+            workouts_with_stl = self.repo.get_hevy_workouts(
+                start_date=(date.today() - timedelta(days=days)).isoformat(),
+                limit=100,
+            )
+            stl_by_id = {w.get("id"): w for w in workouts_with_stl}
+            for rw in result.get("recent_workouts", []):
+                w = stl_by_id.get(rw.get("id"))
+                if w is not None:
+                    rw["training_load"] = w.get("training_load")
+                    rw["stl_method"] = w.get("stl_method")
+        except Exception:
+            pass  # Non-critical — don't fail the whole summary
+
         # Add strength PRs from HEVY's is_pr flag
         strength_prs = self.agg.get_strength_prs(days=days)
         if strength_prs:
             result["prs"] = strength_prs
 
         return result
+
+    def _get_stl_confidence(self) -> str:
+        """Determine confidence level of recent STL calculations.
+
+        Returns:
+            ``"high"`` when majority of recent workouts used actual RPE,
+            ``"moderate"`` when most used estimation heuristics.
+        """
+        try:
+            cursor = self.agg.db.connection.cursor()
+            cursor.execute(
+                """
+                SELECT stl_method, COUNT(*) as n
+                FROM hevy_workouts
+                WHERE training_load IS NOT NULL
+                    AND date(start_time) >= date('now', '-28 days')
+                GROUP BY stl_method
+                """
+            )
+            rows = cursor.fetchall()
+            methods = {r["stl_method"]: r["n"] for r in rows}
+            srpe_count = methods.get("srpe", 0)
+            total = sum(methods.values())
+            if total > 0 and srpe_count / total >= 0.5:
+                return "high"
+        except Exception:
+            pass
+        return "moderate"
 
     def get_exercise_progression(self, exercise_name: str, days: int = 90) -> dict:
         """Track strength progression for a specific exercise.

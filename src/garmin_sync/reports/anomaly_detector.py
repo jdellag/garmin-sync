@@ -66,6 +66,7 @@ class AnomalyDetector:
             self._check_stress_recovery,
             self._check_overreaching,
             self._check_spo2_concern,
+            self._check_strength_overload,
         ]
 
         anomalies: list[dict] = []
@@ -163,7 +164,10 @@ class AnomalyDetector:
         load = self.agg.get_training_load_trend(end_date)
 
         ratio = load.get("acute_chronic_ratio")
-        if ratio is not None and ratio > 1.5:
+        # Suppress when there is no chronic baseline (all load sits in the last
+        # 7 days): the ratio is then structurally ~4 and not meaningful — e.g.
+        # a user who just started training or only synced one week of data.
+        if ratio is not None and ratio > 1.5 and load.get("chronic_baseline_load"):
             return [
                 {
                     "check": "training_overload",
@@ -367,6 +371,80 @@ class AnomalyDetector:
                     "data": {
                         "avg_spo2": avg_spo2,
                         "min_spo2": resp.get("min_spo2"),
+                    },
+                }
+            ]
+
+        return []
+
+    def _check_strength_overload(self, end_date: date) -> list[dict]:
+        """Flag when strength-specific A:C ratio exceeds 1.5.
+
+        Catches sudden lifting volume spikes that the overall A:C ratio
+        might mask if cardio load is low or stable.  Silently returns
+        empty when HEVY data is absent.
+        """
+        cursor = self.db.connection.cursor()
+
+        # Check if table exists and has training_load data
+        cursor.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='hevy_workouts'"
+        )
+        if not cursor.fetchone():
+            return []
+
+        # Acute (7d) and chronic (28d) strength loads
+        start_7d = (end_date - timedelta(days=6)).isoformat()
+        start_28d = (end_date - timedelta(days=27)).isoformat()
+        ed = end_date.isoformat()
+
+        cursor.execute(
+            """
+            SELECT date(start_time) as d, training_load
+            FROM hevy_workouts
+            WHERE date(start_time) BETWEEN ? AND ?
+                AND training_load IS NOT NULL
+            """,
+            (start_28d, ed),
+        )
+        rows = cursor.fetchall()
+        if not rows:
+            return []
+
+        acute = sum(
+            r["training_load"] for r in rows
+            if r["d"] >= start_7d and r["training_load"]
+        )
+        all_loads = [r["training_load"] for r in rows if r["training_load"]]
+        chronic = sum(all_loads) / 4 if all_loads else 0
+
+        # Require a chronic baseline: load logged BEFORE the acute 7d window.
+        # If everything sits in the last 7 days the ratio is structurally ~4
+        # and meaningless (e.g. someone who just started lifting).
+        baseline = sum(
+            r["training_load"] for r in rows
+            if r["d"] < start_7d and r["training_load"]
+        )
+        if chronic <= 0 or baseline <= 0:
+            return []
+
+        strength_ac = round(acute / chronic, 2)
+
+        if strength_ac > 1.5:
+            return [
+                {
+                    "check": "strength_overload",
+                    "severity": "warning",
+                    "message": (
+                        f"Strength training A:C ratio is {strength_ac:.2f} "
+                        f"(acute {acute:.0f} / chronic weekly avg {chronic:.0f}) "
+                        "— sudden volume spike increases injury risk"
+                    ),
+                    "data": {
+                        "strength_ac_ratio": strength_ac,
+                        "acute_strength_7d": round(acute, 1),
+                        "chronic_strength_28d": round(chronic, 1),
                     },
                 }
             ]

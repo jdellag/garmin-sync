@@ -62,10 +62,11 @@ Output saved to `reports/longitudinal-YYYY-MM-DD.md`.
 garmin-sync analyze anomalies
 ```
 
-Scans for 9 health and training anomalies:
+Scans for 10 health and training anomalies:
 - HRV crash (significant drop from baseline)
 - RHR spike (elevated resting heart rate)
 - Training overload (high acute:chronic ratio)
+- Strength overload (strength-specific A:C spike)
 - Sleep degradation (declining quality or duration)
 - Body battery depletion (poor overnight recovery)
 - SpO2 drop (blood oxygen below threshold)
@@ -83,7 +84,7 @@ garmin-sync analyze periodization
 
 Analyzes your current training phase:
 - **Phase detection:** Recovery, maintenance, building, peaking, or overreaching
-- **Readiness score:** 0-100 composite with traffic-light signal
+- **Readiness score:** 0-100 composite with traffic-light signal (includes strength fatigue when HEVY data is available)
 - **Deload recommendation:** Whether a deload week is advised
 
 ## Computed analytics
@@ -93,7 +94,7 @@ The following metrics are computed from your data and available through tools an
 | Category | Metrics |
 |----------|---------|
 | **Recovery** | HRV context (7d/28d baselines, delta), sleep consistency (bedtime variance, REM/deep %), body battery (overnight recovery, weekday/weekend), RHR trend, training readiness |
-| **Training Load** | Acute (7d) / chronic (28d) load, A:C ratio with risk assessment, load by sport, training effect balance |
+| **Training Load** | Combined cardio + strength load (EPOC + sRPE), acute (7d) / chronic (28d), A:C ratio with risk assessment, cardio/strength breakdown, load by sport, training effect balance |
 | **Cardio** | Running cadence trends, VO2 max progression, elevation summary, HR drift, pacing analysis (CoV, negative splits) |
 | **Strength** | Volume by muscle group (actual/target sets), exercise progression (est. 1RM via Epley), RPE analysis, overreaching detection, PR surfacing |
 | **Correlations** | Stress-recovery patterns, sleep-performance grading (A-F scale with next-day impact) |

@@ -121,12 +121,20 @@ class PeriodizationAnalyzer:
     def calculate_readiness_score(self, end_date: date | None = None) -> dict:
         """Compute a composite 0-100 readiness score from multiple signals.
 
-        Components (max 100):
+        Without HEVY data (5 components, max 100):
           - HRV delta from baseline  (25 pts)
           - Sleep score              (20 pts)
           - Body battery morning high(20 pts)
           - Resting HR delta         (15 pts, inverted)
           - A:C ratio proximity to 1 (20 pts)
+
+        With HEVY data (6 components, max 100):
+          - HRV delta from baseline  (20 pts)
+          - Sleep score              (20 pts)
+          - Body battery morning high(20 pts)
+          - Resting HR delta         (15 pts, inverted)
+          - A:C ratio proximity to 1 (15 pts)
+          - Strength fatigue         (10 pts, penalty-based)
 
         Args:
             end_date: Analysis end date.  Defaults to today.
@@ -138,13 +146,25 @@ class PeriodizationAnalyzer:
         if end_date is None:
             end_date = date.today()
 
-        components: dict = {
-            "hrv": {"value": None, "score": 0, "max": 25, "detail": "insufficient data"},
-            "sleep": {"value": None, "score": 0, "max": 20, "detail": "insufficient data"},
-            "body_battery": {"value": None, "score": 0, "max": 20, "detail": "insufficient data"},
-            "resting_hr": {"value": None, "score": 0, "max": 15, "detail": "insufficient data"},
-            "ac_ratio": {"value": None, "score": 0, "max": 20, "detail": "insufficient data"},
-        }
+        has_hevy = self._has_hevy_data()
+
+        if has_hevy:
+            components: dict = {
+                "hrv": {"value": None, "score": 0, "max": 20, "detail": "insufficient data"},
+                "sleep": {"value": None, "score": 0, "max": 20, "detail": "insufficient data"},
+                "body_battery": {"value": None, "score": 0, "max": 20, "detail": "insufficient data"},
+                "resting_hr": {"value": None, "score": 0, "max": 15, "detail": "insufficient data"},
+                "ac_ratio": {"value": None, "score": 0, "max": 15, "detail": "insufficient data"},
+                "strength_fatigue": {"value": None, "score": 0, "max": 10, "detail": "insufficient data"},
+            }
+        else:
+            components = {
+                "hrv": {"value": None, "score": 0, "max": 25, "detail": "insufficient data"},
+                "sleep": {"value": None, "score": 0, "max": 20, "detail": "insufficient data"},
+                "body_battery": {"value": None, "score": 0, "max": 20, "detail": "insufficient data"},
+                "resting_hr": {"value": None, "score": 0, "max": 15, "detail": "insufficient data"},
+                "ac_ratio": {"value": None, "score": 0, "max": 20, "detail": "insufficient data"},
+            }
 
         try:
             self._score_hrv(end_date, components)
@@ -170,6 +190,12 @@ class PeriodizationAnalyzer:
             self._score_ac_ratio(end_date, components)
         except Exception:
             logger.debug("Readiness: A:C ratio scoring failed", exc_info=True)
+
+        if has_hevy:
+            try:
+                self._score_strength_fatigue(end_date, components)
+            except Exception:
+                logger.debug("Readiness: strength fatigue scoring failed", exc_info=True)
 
         total = sum(c["score"] for c in components.values())
 
@@ -415,23 +441,22 @@ class PeriodizationAnalyzer:
     # --- Component scorers for readiness ---
 
     def _score_hrv(self, end_date: date, components: dict) -> None:
-        """Score HRV component (max 25 pts)."""
+        """Score HRV component (max from components dict)."""
         hrv = self.agg.get_hrv_context(end_date)
         delta = hrv.get("delta_from_baseline")
         if delta is None:
             return
 
+        max_pts = components["hrv"]["max"]
         components["hrv"]["value"] = delta
-        # 0% delta -> 25 pts, -20% delta -> 0 pts, >=+10% -> 25 pts
-        if delta >= 10:
-            score = 25
-        elif delta >= 0:
-            score = 25
+        # 0% delta -> max pts, -20% delta -> 0 pts, >=+10% -> max pts
+        if delta >= 0:
+            score = max_pts
         else:
-            # Linear from 0 at -20% to 25 at 0%
-            score = max(0, 25 + (delta * 25 / 20))
+            # Linear from 0 at -20% to max_pts at 0%
+            score = max(0, max_pts + (delta * max_pts / 20))
 
-        score = int(min(25, max(0, score)))
+        score = int(min(max_pts, max(0, score)))
         components["hrv"]["score"] = score
         components["hrv"]["detail"] = f"HRV delta {delta:+.1f}% from 7d baseline"
 
@@ -480,15 +505,120 @@ class PeriodizationAnalyzer:
         components["resting_hr"]["detail"] = f"RHR {delta:+d} bpm from 28d baseline"
 
     def _score_ac_ratio(self, end_date: date, components: dict) -> None:
-        """Score A:C ratio proximity component (max 20 pts)."""
+        """Score A:C ratio proximity component (max from components dict)."""
         load = self.agg.get_training_load_trend(end_date)
         ratio = load.get("acute_chronic_ratio")
         if ratio is None:
             return
 
+        max_pts = components["ac_ratio"]["max"]
         components["ac_ratio"]["value"] = ratio
-        # At 1.0 -> 20 pts, at 0.5 or 1.5 -> 0 pts
-        score = max(0, 20 - abs(ratio - 1.0) * 40)
-        score = int(min(20, max(0, score)))
+        # At 1.0 -> max pts, at 0.5 or 1.5 -> 0 pts
+        score = max(0, max_pts - abs(ratio - 1.0) * (max_pts * 2))
+        score = int(min(max_pts, max(0, score)))
         components["ac_ratio"]["score"] = score
         components["ac_ratio"]["detail"] = f"A:C ratio {ratio:.2f} (optimal ~1.0)"
+
+    def _score_strength_fatigue(self, end_date: date, components: dict) -> None:
+        """Score strength fatigue component (max 10 pts, penalty-based).
+
+        Checks recent strength training patterns for fatigue signals:
+        - Strength session in the last 24 h
+        - Same muscle groups trained on consecutive days
+        - High frequency (3+ sessions in 5 days)
+        """
+        max_pts = components["strength_fatigue"]["max"]
+        score = max_pts
+        penalties: list[str] = []
+
+        cursor = self.agg.db.connection.cursor()
+
+        # Workouts in the last 5 days
+        start_5d = (end_date - timedelta(days=4)).isoformat()
+        ed = end_date.isoformat()
+        yesterday = (end_date - timedelta(days=1)).isoformat()
+
+        cursor.execute(
+            """
+            SELECT id, date(start_time) as workout_date
+            FROM hevy_workouts
+            WHERE date(start_time) BETWEEN ? AND ?
+            ORDER BY start_time DESC
+            """,
+            (start_5d, ed),
+        )
+        recent_workouts = cursor.fetchall()
+
+        if not recent_workouts:
+            # No recent strength training — full points
+            components["strength_fatigue"]["value"] = "no_recent_sessions"
+            components["strength_fatigue"]["score"] = max_pts
+            components["strength_fatigue"]["detail"] = "No recent strength sessions"
+            return
+
+        # Penalty: session in last 24h
+        dates = [r["workout_date"] for r in recent_workouts]
+        if ed in dates or yesterday in dates:
+            score -= 3
+            penalties.append("session in last 24h")
+
+        # Penalty: same muscle groups on consecutive days
+        if len(dates) >= 2 and self._consecutive_muscle_overlap(cursor, recent_workouts):
+            score -= 5
+            penalties.append("same muscles on consecutive days")
+
+        # Penalty: high frequency
+        if len(recent_workouts) >= 3:
+            score -= 2
+            penalties.append(f"{len(recent_workouts)} sessions in 5 days")
+
+        score = max(0, score)
+        components["strength_fatigue"]["value"] = len(recent_workouts)
+        components["strength_fatigue"]["score"] = score
+        detail = f"{len(recent_workouts)} sessions in 5d"
+        if penalties:
+            detail += f" ({', '.join(penalties)})"
+        components["strength_fatigue"]["detail"] = detail
+
+    @staticmethod
+    def _consecutive_muscle_overlap(cursor, workouts: list) -> bool:
+        """Check if any two consecutive-day workouts share muscle groups."""
+        by_date: dict[str, set[str]] = {}
+        for w in workouts:
+            d = w["workout_date"]
+            if d not in by_date:
+                by_date[d] = set()
+            cursor.execute(
+                "SELECT DISTINCT muscle_group FROM hevy_exercises WHERE workout_id = ?",
+                (w["id"],),
+            )
+            by_date[d].update(
+                row[0] for row in cursor.fetchall() if row[0]
+            )
+
+        sorted_dates = sorted(by_date.keys())
+        for i in range(len(sorted_dates) - 1):
+            d1, d2 = sorted_dates[i], sorted_dates[i + 1]
+            # Check if consecutive calendar days
+            from datetime import date as dt_date
+            date1 = dt_date.fromisoformat(d1)
+            date2 = dt_date.fromisoformat(d2)
+            if (date2 - date1).days == 1:
+                if by_date[d1] & by_date[d2]:
+                    return True
+        return False
+
+    def _has_hevy_data(self) -> bool:
+        """Check if the hevy_workouts table exists and has data."""
+        try:
+            cursor = self.agg.db.connection.cursor()
+            cursor.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='hevy_workouts'"
+            )
+            if not cursor.fetchone():
+                return False
+            cursor.execute("SELECT COUNT(*) FROM hevy_workouts LIMIT 1")
+            return cursor.fetchone()[0] > 0
+        except Exception:
+            return False

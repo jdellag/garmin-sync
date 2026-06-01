@@ -138,6 +138,7 @@ Surfaces multi-year trends (pace-at-HR, RHR/HRV/sleep baselines, weekly-volume c
 | `garmin-sync hevy sync` | Sync workouts from HEVY |
 | `garmin-sync hevy status` | Show config and recent workouts |
 | `garmin-sync hevy volume` | Volume breakdown by muscle group |
+| `garmin-sync hevy recalc-stl` | Recompute Strength Training Load for existing workouts |
 
 See [HEVY Integration](hevy-integration.md) for setup details.
 

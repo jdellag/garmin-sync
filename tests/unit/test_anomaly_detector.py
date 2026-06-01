@@ -53,6 +53,7 @@ def _healthy_training_load():
         "acute_chronic_ratio": 1.1,
         "acute_load_7d": 320,
         "chronic_load_28d": 290,
+        "chronic_baseline_load": 230,
     }
 
 
@@ -155,6 +156,7 @@ class TestTrainingOverload:
             "acute_chronic_ratio": 1.8,
             "acute_load_7d": 540,
             "chronic_load_28d": 300,
+            "chronic_baseline_load": 240,
         }
         results = detector._check_training_overload(date(2026, 5, 23))
         assert len(results) == 1
@@ -303,7 +305,8 @@ class TestSeveritySorting:
         # the same aggregator, we can't get both from one run.  Trick: make
         # training_load_trend return different values on successive calls.
         load_results = iter([
-            {"acute_chronic_ratio": 1.9, "acute_load_7d": 570, "chronic_load_28d": 300},
+            {"acute_chronic_ratio": 1.9, "acute_load_7d": 570, "chronic_load_28d": 300,
+             "chronic_baseline_load": 240},
             {"acute_chronic_ratio": 0.5, "acute_load_7d": 100, "chronic_load_28d": 200},
         ])
         mock_agg.get_training_load_trend.side_effect = lambda *a, **kw: next(load_results)

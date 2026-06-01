@@ -1006,14 +1006,17 @@ class Repository:
                 INSERT INTO hevy_workouts (
                     id, title, description, start_time, end_time,
                     duration_seconds, volume_kg, set_count, rep_count,
-                    exercise_count, raw_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    exercise_count, training_load, stl_method,
+                    raw_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     description = excluded.description,
                     volume_kg = excluded.volume_kg,
                     set_count = excluded.set_count,
                     rep_count = excluded.rep_count,
+                    training_load = COALESCE(excluded.training_load, hevy_workouts.training_load),
+                    stl_method = COALESCE(excluded.stl_method, hevy_workouts.stl_method),
                     raw_json = excluded.raw_json,
                     updated_at = CURRENT_TIMESTAMP
                 """,
@@ -1028,6 +1031,8 @@ class Repository:
                     workout.total_sets,
                     workout.total_reps,
                     workout.exercise_count,
+                    workout.training_load,
+                    workout.stl_method,
                     workout.raw_json,
                 )
             )
