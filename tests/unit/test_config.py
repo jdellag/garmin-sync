@@ -68,6 +68,29 @@ class TestSettings:
 
         assert settings.data_dir == temp_dir
 
+    def test_config_dir_override_and_config_paths(self, temp_dir, monkeypatch):
+        """config.toml/profile.toml follow config_dir, which is independently
+        overridable (so relocating data_dir doesn't orphan config)."""
+        monkeypatch.setenv("GARMIN_SYNC_DATA_DIR", str(temp_dir / "data"))
+        monkeypatch.setenv("GARMIN_SYNC_CONFIG_DIR", str(temp_dir / "cfg"))
+
+        settings = Settings()
+
+        assert settings.config_dir == temp_dir / "cfg"
+        assert settings.ai_config_path == temp_dir / "cfg" / "config.toml"
+        assert settings.profile_path == temp_dir / "cfg" / "profile.toml"
+
+    def test_path_env_vars_expand_user(self, monkeypatch):
+        """A ~ in a path env var expands to $HOME, not a literal './~' dir."""
+        monkeypatch.setenv("GARMIN_SYNC_DATA_DIR", "~/gs_data_test")
+        monkeypatch.setenv("GARMIN_SYNC_CONFIG_DIR", "~/gs_cfg_test")
+
+        settings = Settings()
+
+        assert settings.data_dir == Path.home() / "gs_data_test"
+        assert settings.config_dir == Path.home() / "gs_cfg_test"
+        assert "~" not in str(settings.data_dir)
+
     def test_ensure_directories(self, temp_dir):
         """Test that ensure_directories creates required directories."""
         settings = Settings(

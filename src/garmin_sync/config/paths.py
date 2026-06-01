@@ -28,14 +28,16 @@ def default_data_dir() -> Path:
         # lived here; switching to ~/Library/Application Support would
         # orphan existing data.
         return Path.home() / ".local" / "share" / "garmin-sync"
-    return Path(user_data_dir("garmin-sync", ensure_exists=False))
+    # appauthor=False avoids platformdirs' default of repeating the app name as
+    # the author segment on Windows (…\garmin-sync\garmin-sync).
+    return Path(user_data_dir("garmin-sync", appauthor=False, ensure_exists=False))
 
 
 def default_config_dir() -> Path:
     """Return the platform-native config directory for garmin-sync."""
     if sys.platform == "darwin":
         return Path.home() / ".config" / "garmin-sync"
-    return Path(user_config_dir("garmin-sync", ensure_exists=False))
+    return Path(user_config_dir("garmin-sync", appauthor=False, ensure_exists=False))
 
 
 def default_config_path() -> Path:

@@ -4,14 +4,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from garmin_sync.config.paths import (
-    default_config_path,
+    default_config_dir,
     default_data_dir,
     default_garth_token_dir,
-    default_profile_path,
 )
 
 
@@ -40,6 +39,18 @@ class Settings(BaseSettings):
         default_factory=default_garth_token_dir,
         description="Directory for Garth OAuth tokens",
     )
+    config_dir: Path = Field(
+        default_factory=default_config_dir,
+        description="Directory for config.toml and profile.toml "
+                    "(override with GARMIN_SYNC_CONFIG_DIR)",
+    )
+
+    @field_validator("data_dir", "garth_token_dir", "config_dir", mode="after")
+    @classmethod
+    def _expand_user_paths(cls, v: Path) -> Path:
+        """Expand ~ so e.g. GARMIN_SYNC_DATA_DIR=~/foo resolves to $HOME/foo
+        instead of a literal './~/foo' under the current directory."""
+        return v.expanduser()
 
     # Database
     database_name: str = Field(
@@ -112,12 +123,12 @@ class Settings(BaseSettings):
     @property
     def ai_config_path(self) -> Path:
         """Path to AI configuration file (secrets + technical settings)."""
-        return default_config_path()
+        return self.config_dir / "config.toml"
 
     @property
     def profile_path(self) -> Path:
         """Path to training profile file (schedule, goals, timezone)."""
-        return default_profile_path()
+        return self.config_dir / "profile.toml"
 
     def ensure_directories(self) -> None:
         """Create all required directories if they don't exist."""

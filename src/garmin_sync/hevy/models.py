@@ -4,6 +4,29 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+def _to_float(val) -> Optional[float]:
+    """Coerce a value to float, tolerating string-typed numerics and None."""
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(val) -> Optional[int]:
+    """Coerce a value to int, tolerating string-typed numerics (incl. "8.0")."""
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        try:
+            return int(float(val))
+        except (TypeError, ValueError):
+            return None
+
+
 @dataclass
 class HevySet:
     """A single set within an exercise."""
@@ -23,12 +46,12 @@ class HevySet:
         return cls(
             set_index=data.get("index", index),
             set_type=data.get("set_type", "normal"),
-            weight_kg=data.get("weight_kg"),
-            reps=data.get("reps"),
-            distance_meters=data.get("distance_meters"),
-            duration_seconds=data.get("duration_seconds"),
-            rpe=data.get("rpe"),
-            is_pr=data.get("is_pr", False),
+            weight_kg=_to_float(data.get("weight_kg")),
+            reps=_to_int(data.get("reps")),
+            distance_meters=_to_float(data.get("distance_meters")),
+            duration_seconds=_to_int(data.get("duration_seconds")),
+            rpe=_to_float(data.get("rpe")),
+            is_pr=bool(data.get("is_pr", False)),
         )
 
     @property
@@ -56,7 +79,7 @@ class HevyExercise:
     def from_api_response(cls, data: dict, order: int = 0) -> "HevyExercise":
         """Create HevyExercise from HEVY API response."""
         sets = []
-        for idx, set_data in enumerate(data.get("sets", [])):
+        for idx, set_data in enumerate(data.get("sets") or []):
             sets.append(HevySet.from_api_response(set_data, idx))
 
         return cls(
@@ -115,7 +138,7 @@ class HevyWorkout:
     def from_api_response(cls, data: dict) -> "HevyWorkout":
         """Create HevyWorkout from HEVY API response."""
         exercises = []
-        for idx, ex_data in enumerate(data.get("exercises", [])):
+        for idx, ex_data in enumerate(data.get("exercises") or []):
             exercises.append(HevyExercise.from_api_response(ex_data, idx))
 
         return cls(

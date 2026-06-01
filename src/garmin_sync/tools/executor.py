@@ -11,6 +11,37 @@ logger = logging.getLogger(__name__)
 
 KG_TO_LBS = 2.20462
 
+# HEVY-controlled free-text fields. Tool results flow to the LLM as raw JSON
+# (no <hevy_*> wrapper), so sanitize these at the executor boundary to give the
+# tool path the same prompt-injection defense as the static prompt path.
+_HEVY_TEXT_KEYS = frozenset(
+    {"title", "name", "exercise_name", "muscle_group", "exercise", "notes", "description"}
+)
+
+
+def _safe_str(s: Any) -> str:
+    """Strip tag-breaking/control chars from third-party text.
+
+    Imported lazily to avoid an import cycle: the ``garmin_sync.ai`` package
+    eagerly imports ``chat``, which imports this module.
+    """
+    from garmin_sync.ai.prompt_builder import safe_user_string
+    return safe_user_string(s)
+
+
+def _sanitize_hevy_text(obj: Any) -> Any:
+    """Recursively strip tag-breaking/control chars from HEVY free-text fields
+    in a tool-result structure (titles, exercise names, etc.)."""
+    if isinstance(obj, dict):
+        return {
+            k: (_safe_str(v) if k in _HEVY_TEXT_KEYS and isinstance(v, str)
+                else _sanitize_hevy_text(v))
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_sanitize_hevy_text(x) for x in obj]
+    return obj
+
 
 class ToolExecutor:
     """Executes fitness data tools against the database.
@@ -276,7 +307,7 @@ class ToolExecutor:
             "total_volume_lbs": round((data.get("total_volume_kg", 0) or 0) * KG_TO_LBS),
             "total_sets": data.get("total_sets", 0),
             "by_muscle_group": by_muscle,
-            "recent_workouts": data.get("recent_workouts", []),
+            "recent_workouts": _sanitize_hevy_text(data.get("recent_workouts", [])),
         }
 
         # Add RPE analysis if RPE data exists
@@ -353,12 +384,14 @@ class ToolExecutor:
             Dict with estimated 1RM, max weights, and progression percentage.
         """
         data = self.agg.get_strength_exercise_progression(exercise_name, days=days)
+        # Echo the name back sanitized (it's interpolated into LLM-facing text).
+        safe_name = _safe_str(exercise_name)
 
         if not data.get("sessions"):
             return {
-                "exercise": exercise_name,
+                "exercise": safe_name,
                 "found": False,
-                "message": f"No data found for '{exercise_name}' in last {days} days",
+                "message": f"No data found for '{safe_name}' in last {days} days",
             }
 
         # Get RPE trend for this exercise
@@ -382,7 +415,7 @@ class ToolExecutor:
             sessions.append(entry)
 
         result = {
-            "exercise": exercise_name,
+            "exercise": safe_name,
             "found": True,
             "sessions": sessions,
             "current_1rm_lbs": round((data.get("current_1rm") or 0) * KG_TO_LBS) if data.get("current_1rm") else None,
@@ -403,7 +436,7 @@ class ToolExecutor:
         Returns:
             List of workouts with exercises and sets (e.g., "135x10, 155x8").
         """
-        return self.repo.get_hevy_workout_details(days=days)
+        return _sanitize_hevy_text(self.repo.get_hevy_workout_details(days=days))
 
     def get_weekly_comparison(self) -> dict:
         """Compare this week vs last week across all metrics.

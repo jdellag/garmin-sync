@@ -1,10 +1,13 @@
 """HEVY API client."""
 
+import logging
 import sys
 import time
 from typing import Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 class HevyAPIError(Exception):
@@ -70,12 +73,22 @@ class HevyClient:
         for attempt in range(max_retries):
             try:
                 self._last_request_time = time.time()
-                response = self.session.request(method, url, params=params)
+                # (connect, read) timeout so a stalled connection can't hang a
+                # sync (incl. the scheduled job) indefinitely.
+                response = self.session.request(
+                    method, url, params=params, timeout=(5, 30)
+                )
 
                 if response.status_code == 429:
-                    # Rate limited - wait and retry
-                    retry_after = int(response.headers.get("Retry-After", 5))
-                    time.sleep(retry_after)
+                    # Rate limited - wait and retry. Retry-After may be an int
+                    # (seconds) or an HTTP-date; int() on a date would crash, so
+                    # parse defensively and cap the wait.
+                    raw_retry = response.headers.get("Retry-After", "5")
+                    try:
+                        retry_after = int(raw_retry)
+                    except (TypeError, ValueError):
+                        retry_after = 5
+                    time.sleep(min(max(retry_after, 0), 60))
                     continue
 
                 if response.status_code == 401:
@@ -194,20 +207,32 @@ class HevyClient:
             for workout in workouts:
                 # Filter by date if specified
                 if since_date:
-                    workout_date = workout.get("start_time", "")[:10]
-                    if workout_date < since_date:
+                    workout_date = (workout.get("start_time") or "")[:10]
+                    # Only stop on a genuinely older, *dated* workout. A missing
+                    # start_time must not truncate the whole sync (and `None`
+                    # must not crash the slice).
+                    if workout_date and workout_date < since_date:
                         # Workouts are returned newest first, so we can stop
                         return all_workouts
 
                 all_workouts.append(workout)
 
-            # Check if there are more pages
-            page_count = response.get("page_count", 1)
-            if page >= page_count:
+            # Check if there are more pages. If page_count is absent, fall back
+            # to "a full page implies there may be more" instead of stopping.
+            page_count = response.get("page_count")
+            if page_count is not None:
+                if page >= page_count:
+                    break
+            elif len(workouts) < 10:  # short page ⇒ last page
                 break
 
             page += 1
 
+        if page > max_pages:
+            logger.warning(
+                "HEVY workout pagination hit max_pages=%d; results may be "
+                "truncated (older workouts not fetched)", max_pages,
+            )
         return all_workouts
 
     def get_all_exercise_templates(self, max_pages: int = 100) -> list[dict]:
@@ -231,11 +256,20 @@ class HevyClient:
 
             all_templates.extend(templates)
 
-            # Check if there are more pages
-            page_count = response.get("page_count", 1)
-            if page >= page_count:
+            # Check if there are more pages. Absent page_count ⇒ a full page
+            # implies more (don't stop early and silently drop templates).
+            page_count = response.get("page_count")
+            if page_count is not None:
+                if page >= page_count:
+                    break
+            elif len(templates) < 10:
                 break
 
             page += 1
 
+        if page > max_pages:
+            logger.warning(
+                "HEVY template pagination hit max_pages=%d; results may be "
+                "truncated", max_pages,
+            )
         return all_templates

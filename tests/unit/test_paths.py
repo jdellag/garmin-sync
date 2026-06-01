@@ -39,7 +39,7 @@ class TestDefaultDataDir:
 
         result = paths.default_data_dir()
 
-        mock_user_data.assert_called_once_with("garmin-sync", ensure_exists=False)
+        mock_user_data.assert_called_once_with("garmin-sync", appauthor=False, ensure_exists=False)
         assert "AppData" in str(result)
         assert "garmin-sync" in str(result)
 
@@ -52,7 +52,7 @@ class TestDefaultDataDir:
 
         result = paths.default_data_dir()
 
-        mock_user_data.assert_called_once_with("garmin-sync", ensure_exists=False)
+        mock_user_data.assert_called_once_with("garmin-sync", appauthor=False, ensure_exists=False)
         assert result == Path("/home/testuser/.local/share/garmin-sync")
 
 
@@ -82,7 +82,7 @@ class TestDefaultConfigDir:
 
         result = paths.default_config_dir()
 
-        mock_user_config.assert_called_once_with("garmin-sync", ensure_exists=False)
+        mock_user_config.assert_called_once_with("garmin-sync", appauthor=False, ensure_exists=False)
         assert "AppData" in str(result)
 
 

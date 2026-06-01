@@ -109,9 +109,25 @@ class TestHevySet:
         set_data = HevySet(set_index=0, set_type="normal", weight_kg=50.0)
         assert set_data.volume_kg == 0.0
 
+    def test_from_api_coerces_string_numerics(self):
+        """String-typed weight/reps (loose JSON) are coerced so later volume
+        math doesn't crash with a TypeError."""
+        s = HevySet.from_api_response({"weight_kg": "80", "reps": "8", "rpe": "7.5"})
+        assert s.weight_kg == 80.0
+        assert s.reps == 8
+        assert s.rpe == 7.5
+        assert s.volume_kg == 640.0
+
 
 class TestHevyExercise:
     """Tests for HevyExercise model."""
+
+    def test_from_api_tolerates_null_sets(self):
+        """A workout/exercise with sets:null (logged, no completed sets) must
+        not crash — it parses to an exercise with no sets."""
+        exercise = HevyExercise.from_api_response({"title": "Bench", "sets": None})
+        assert exercise.sets == []
+        assert exercise.exercise_name == "Bench"
 
     def test_from_api_response(self):
         """Test parsing exercise from API response."""
@@ -251,6 +267,42 @@ class TestHevyClient:
         assert "workouts" in result
         assert len(result["workouts"]) == 1
         assert result["workouts"][0]["id"] == "workout-123"
+
+    def test_get_all_workouts_no_truncation_on_missing_fields(self):
+        """Regression: a workout missing start_time must NOT truncate the sync,
+        and a missing page_count on a full page must NOT stop pagination."""
+        client = HevyClient(api_key="test-key")
+        pages = {
+            # Full page (10) with NO page_count field -> must continue to page 2.
+            1: {"workouts": [
+                {"id": f"w{i}", "start_time": "2024-06-10T10:00:00"} for i in range(10)
+            ]},
+            # An undated workout must not trigger the "older -> stop" early return.
+            2: {"workouts": [
+                {"id": "w-undated"},
+                {"id": "w-dated", "start_time": "2024-06-10T10:00:00"},
+            ]},
+            3: {"workouts": []},
+        }
+        with patch.object(
+            client, "get_workouts",
+            side_effect=lambda page, page_size=10: pages.get(page, {"workouts": []}),
+        ):
+            result = client.get_all_workouts(since_date="2024-01-01")
+
+        assert len(result) == 12  # 10 from page 1 + 2 from page 2 (none dropped)
+        assert any(w["id"] == "w-undated" for w in result)
+
+    def test_get_all_workouts_stops_at_older_dated_workout(self):
+        """A genuinely older, *dated* workout still stops the scan (newest-first)."""
+        client = HevyClient(api_key="test-key")
+        page = {"workouts": [
+            {"id": "recent", "start_time": "2024-06-10T10:00:00"},
+            {"id": "too-old", "start_time": "2023-01-01T10:00:00"},
+        ]}
+        with patch.object(client, "get_workouts", return_value=page):
+            result = client.get_all_workouts(since_date="2024-06-01")
+        assert [w["id"] for w in result] == ["recent"]
 
     @patch("garmin_sync.hevy.client.requests.Session.request")
     def test_get_workout_count(self, mock_request):
