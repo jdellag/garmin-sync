@@ -339,6 +339,60 @@ class TestLLMReportFormatter:
         assert tokens == 100
 
 
+class TestTrainingLoadStrengthSurfacing:
+    """The training-load report must surface the combined cardio/strength
+    split (the point of the STL work). Regression: llm_formatter previously
+    ignored cardio_load_7d/strength_load_7d entirely."""
+
+    def _make_db(self, with_strength: bool):
+        from datetime import date, timedelta
+        db = Database(":memory:")
+        db.initialize()
+        db.migrate()
+        cur = db.connection.cursor()
+        today = date(2026, 5, 31)
+        # Cardio baseline + acute load.
+        for i, off in enumerate((20, 13, 2, 0)):
+            d = (today - timedelta(days=off)).isoformat()
+            cur.execute(
+                "INSERT INTO activities (activity_id, start_time, start_time_local, "
+                "activity_type, activity_name, training_load, average_hr) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (f"a{i}", f"{d}T08:00:00", f"{d}T08:00:00", "running", "Run", 90, 140),
+            )
+        if with_strength:
+            d = (today - timedelta(days=1)).isoformat()
+            cur.execute(
+                "INSERT INTO hevy_workouts (id, title, start_time, duration_seconds, "
+                "training_load, stl_method) VALUES (?, ?, ?, ?, ?, ?)",
+                ("h1", "Lift", f"{d}T18:00:00+00:00", 3600, 260.0, "srpe"),
+            )
+        db.connection.commit()
+        return db, today
+
+    def test_breakdown_present_when_strength_logged(self):
+        from datetime import date
+        db, today = self._make_db(with_strength=True)
+        fmt = LLMReportFormatter(DataAggregator(db))
+        load = fmt.aggregator.get_training_load_trend(today)
+
+        md = fmt._format_training_load_section(load)
+        assert "Cardio / Strength" in md
+        assert "% strength" in md
+
+        js = fmt._build_training_load_json(load)
+        assert js["strength_7d"] == load["strength_load_7d"]
+        assert js["cardio_7d"] == load["cardio_load_7d"]
+        assert js["strength_pct"] == load["strength_pct_of_total"]
+
+    def test_breakdown_absent_when_cardio_only(self):
+        db, today = self._make_db(with_strength=False)
+        fmt = LLMReportFormatter(DataAggregator(db))
+        load = fmt.aggregator.get_training_load_trend(today)
+        # No strength load → no breakdown row (avoids a noisy "0 strength").
+        assert "Cardio / Strength" not in fmt._format_training_load_section(load)
+
+
 class TestReportGenerator:
     """Test ReportGenerator class."""
 

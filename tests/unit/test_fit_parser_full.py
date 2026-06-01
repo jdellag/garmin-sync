@@ -112,6 +112,25 @@ class TestComputeSplits:
         records = [{"timestamp": datetime.now(), "heart_rate": 140}]
         assert _compute_splits(records) == []
 
+    def test_first_split_measured_from_true_start(self):
+        """The first record carries accumulated distance 0.0 and must anchor
+        the split baseline. Regression: a `distance > 0` filter dropped it,
+        so the first split's time/pace was measured from the *second* record
+        (a 2x pace error on sparsely-recorded activities)."""
+        t0 = datetime(2024, 6, 1, 7, 0, 0)
+        records = [
+            {"timestamp": t0, "distance": 0.0, "heart_rate": 140},
+            {"timestamp": t0 + timedelta(seconds=150), "distance": 500.0, "heart_rate": 150},
+            {"timestamp": t0 + timedelta(seconds=300), "distance": 1000.0, "heart_rate": 160},
+        ]
+        splits = _compute_splits(records)
+        assert len(splits) >= 1
+        first = splits[0]
+        assert first.distance == 1000.0
+        # Measured from t0 (true start) = 300s, NOT from t0+150s = 150s.
+        assert first.elapsed_time == pytest.approx(300.0)
+        assert first.pace_seconds_per_km == pytest.approx(300.0)
+
     def test_single_km_split(self):
         """Records covering just over 1 km should produce 1 full split."""
         # i goes 0..334, distance = i * 3.0, so record 334 = 1002 m

@@ -870,20 +870,28 @@ class SyncManager:
                 current += timedelta(days=1)
 
             total_days = (end_date - start_date).days + 1
-            to_fetch = total_days if force else (total_days - fresh)
 
-            # Estimate API calls: batch endpoints = 1, per-day = to_fetch
-            if detailed and data_type in ("sleep", "stress", "hrv"):
-                api_calls = to_fetch
-            elif data_type in ("heart_rate", "training_readiness", "respiration", "spo2"):
-                # These always use per-day endpoints
+            # Per-day endpoints honor the freshness skip (one call per day to
+            # fetch).  Batch endpoints pull the whole window in a single call
+            # and re-upsert every day regardless of DB freshness, so they never
+            # "skip" and always re-fetch all days.
+            per_day = (
+                (detailed and data_type in ("sleep", "stress", "hrv"))
+                or data_type in ("heart_rate", "training_readiness", "respiration", "spo2")
+            )
+
+            if per_day:
+                to_fetch = total_days if force else (total_days - fresh)
+                fresh_skipped = 0 if force else fresh
                 api_calls = to_fetch
             else:
+                to_fetch = total_days
+                fresh_skipped = 0
                 api_calls = 1  # batch endpoint
 
             plan["types"][data_type] = {
                 "existing": existing,
-                "fresh_skipped": 0 if force else fresh,
+                "fresh_skipped": fresh_skipped,
                 "to_fetch": to_fetch,
                 "api_calls": api_calls,
             }

@@ -130,6 +130,20 @@ class TestLaunchdModule:
         assert success is False
         assert "Failed to load plist" in message
 
+    @patch("garmin_sync.scheduler.launchd.subprocess.run", side_effect=FileNotFoundError())
+    @patch("garmin_sync.scheduler.launchd.shutil.which")
+    @patch("garmin_sync.scheduler.launchd.get_plist_path")
+    def test_install_handles_missing_launchctl(self, mock_plist_path, mock_which, mock_run, tmp_path):
+        """A missing launchctl binary yields a clean failure, not a traceback."""
+        plist_path = tmp_path / "Library" / "LaunchAgents" / "com.garmin-sync.daily.plist"
+        mock_plist_path.return_value = plist_path
+        mock_which.return_value = "/usr/local/bin/garmin-sync"
+
+        success, message = launchd.install(tmp_path / "logs")
+
+        assert success is False
+        assert "not found" in message.lower()
+
     @patch("garmin_sync.scheduler.launchd.subprocess.run")
     @patch("garmin_sync.scheduler.launchd.get_plist_path")
     def test_uninstall_success(self, mock_plist_path, mock_run, tmp_path):

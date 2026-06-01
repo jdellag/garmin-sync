@@ -161,7 +161,7 @@ def _compute_splits(
         r
         for r in records
         if r.get("distance") is not None
-        and r["distance"] > 0
+        and r["distance"] >= 0
         and r.get("timestamp") is not None
     ]
     if not usable:

@@ -307,7 +307,9 @@ class LLMReportFormatter:
         if health.avg_morning_bb and health.avg_evening_bb:
             parts.append(f"Body Battery: {health.avg_morning_bb}→{health.avg_evening_bb}")
 
-        if llm_mode:
+        if not parts:
+            lines.append("*No health metrics available.*")
+        elif llm_mode:
             # Compact format for LLM
             lines.append("- " + " | ".join(parts))
         else:
@@ -525,6 +527,19 @@ class LLMReportFormatter:
                 risk = "High Risk (>1.5)"
             lines.append(f"| Acute:Chronic Ratio | {ratio:.2f} ({risk}) |")
 
+        # Cardio vs strength breakdown — surfaces the HEVY strength
+        # contribution.  Combined load is approximate (Garmin EPOC + sRPE);
+        # shown only when there is actual strength load in the window.
+        strength_7d = load.get("strength_load_7d")
+        if strength_7d:
+            cardio_7d = load.get("cardio_load_7d")
+            pct = load.get("strength_pct_of_total")
+            pct_str = f" — {pct:.0f}% strength" if pct is not None else ""
+            lines.append(
+                f"| Cardio / Strength (7-day) | "
+                f"{self._fmt(cardio_7d)} / {self._fmt(strength_7d)}{pct_str} |"
+            )
+
         # Load by activity type
         if load.get("by_type"):
             lines.extend([
@@ -547,8 +562,9 @@ class LLMReportFormatter:
                 "|------|------|------------|",
             ])
             for day in load["daily_loads"]:
-                activities_str = ", ".join(day.get("activities", [])[:3])
-                if len(day.get("activities", [])) > 3:
+                acts = [str(a) for a in (day.get("activities") or []) if a]
+                activities_str = ", ".join(acts[:3])
+                if len(acts) > 3:
                     activities_str += "..."
                 lines.append(f"| {day['date']} | {day['load']:.0f} | {activities_str} |")
 
@@ -609,7 +625,9 @@ class LLMReportFormatter:
 
         lines.append(f"| Morning High | {self._fmt(bb.get('avg_morning_high'))} |")
         lines.append(f"| Evening Low | {self._fmt(bb.get('avg_evening_low'))} |")
-        lines.append(f"| Overnight Recovery | +{self._fmt(bb.get('avg_overnight_recovery'))} points |")
+        ovr = bb.get("avg_overnight_recovery")
+        ovr_str = f"+{self._fmt(ovr)} points" if ovr is not None else self._fmt(ovr)
+        lines.append(f"| Overnight Recovery | {ovr_str} |")
 
         # Daily values
         if bb.get("daily_values"):
@@ -1198,6 +1216,9 @@ class LLMReportFormatter:
             "acute_7d": None,
             "chronic_28d": None,
             "ac_ratio": None,
+            "cardio_7d": None,
+            "strength_7d": None,
+            "strength_pct": None,
             "this_week": None,
             "prev_week": None,
             "change_pct": None,
@@ -1214,6 +1235,9 @@ class LLMReportFormatter:
         result["acute_7d"] = training_load.get("acute_load_7d")
         result["chronic_28d"] = training_load.get("chronic_load_28d")
         result["ac_ratio"] = training_load.get("acute_chronic_ratio")
+        result["cardio_7d"] = training_load.get("cardio_load_7d")
+        result["strength_7d"] = training_load.get("strength_load_7d")
+        result["strength_pct"] = training_load.get("strength_pct_of_total")
         result["this_week"] = training_load.get("this_week_load")
         result["prev_week"] = training_load.get("prev_week_load")
         result["change_pct"] = training_load.get("week_change_pct")

@@ -48,6 +48,31 @@ class TestWindowsTaskInstall:
         assert "GarminSync-Weekend" in second_args
         assert "SAT,SUN" in second_args
 
+    @patch("garmin_sync.scheduler.windows_task.subprocess.run")
+    @patch("garmin_sync.scheduler.windows_task.shutil.which")
+    def test_install_quotes_tr_path(self, mock_which, mock_run, tmp_path):
+        """The /TR action must be quoted so Task Scheduler handles paths with
+        spaces (e.g. C:\\Users\\John Doe\\...). Regression for unquoted /TR."""
+        mock_which.return_value = r"C:\Python\Scripts\garmin-sync.exe"
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+
+        windows_task.install(tmp_path / "logs")
+
+        args = mock_run.call_args_list[0][0][0]
+        tr_value = args[args.index("/TR") + 1]
+        assert tr_value.startswith('"') and tr_value.endswith('"')
+        assert "garmin-sync-daily.bat" in tr_value
+
+    @patch("garmin_sync.scheduler.windows_task.subprocess.run",
+           side_effect=FileNotFoundError())
+    @patch("garmin_sync.scheduler.windows_task.shutil.which")
+    def test_install_handles_missing_schtasks(self, mock_which, mock_run, tmp_path):
+        """A missing schtasks binary yields a clean failure, not a traceback."""
+        mock_which.return_value = r"C:\Python\Scripts\garmin-sync.exe"
+        success, message = windows_task.install(tmp_path / "logs")
+        assert success is False
+        assert "not found" in message.lower()
+
     @patch("garmin_sync.scheduler.windows_task.shutil.which")
     def test_install_garmin_sync_not_found(self, mock_which, tmp_path):
         """Install fails if garmin-sync is not in PATH."""

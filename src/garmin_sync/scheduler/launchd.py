@@ -16,6 +16,17 @@ PLIST_NAME = "com.garmin-sync.daily.plist"
 LABEL = "com.garmin-sync.daily"
 
 
+def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess:
+    """Run a command, converting a missing binary (FileNotFoundError) into a
+    failed result so callers report a clean error instead of a traceback."""
+    try:
+        return subprocess.run(args, **kwargs)
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(
+            args, returncode=127, stdout="", stderr="launchctl not found in PATH"
+        )
+
+
 def get_plist_path() -> Path:
     """Get path to launchd plist file."""
     return Path.home() / "Library" / "LaunchAgents" / PLIST_NAME
@@ -109,7 +120,7 @@ def install(log_dir: Path) -> tuple[bool, str]:
 
     # Unload existing if present
     if plist_path.exists():
-        subprocess.run(
+        _run(
             ["launchctl", "unload", str(plist_path)],
             capture_output=True,
         )
@@ -124,7 +135,7 @@ def install(log_dir: Path) -> tuple[bool, str]:
         plistlib.dump(plist_data, f)
 
     # Load the plist
-    result = subprocess.run(
+    result = _run(
         ["launchctl", "load", str(plist_path)],
         capture_output=True,
         text=True,
@@ -144,7 +155,7 @@ def uninstall() -> tuple[bool, str]:
         return True, "Not installed (nothing to remove)"
 
     # Unload
-    subprocess.run(
+    _run(
         ["launchctl", "unload", str(plist_path)],
         capture_output=True,
     )
@@ -173,7 +184,7 @@ def get_status() -> dict:
         return status
 
     # Check if loaded and get last exit status
-    result = subprocess.run(
+    result = _run(
         ["launchctl", "list", LABEL],
         capture_output=True,
         text=True,

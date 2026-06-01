@@ -18,6 +18,18 @@ import shutil
 import subprocess
 from pathlib import Path
 
+
+def _run(args: list[str]) -> subprocess.CompletedProcess:
+    """Run a command, converting a missing binary (FileNotFoundError) into a
+    failed result so callers report a clean error instead of a traceback."""
+    try:
+        return subprocess.run(args, capture_output=True, text=True)
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(
+            args, returncode=127, stdout="", stderr="schtasks.exe not found in PATH"
+        )
+
+
 TASK_WEEKDAY = "GarminSync-Weekday"
 TASK_WEEKEND = "GarminSync-Weekend"
 TASK_NAMES = (TASK_WEEKDAY, TASK_WEEKEND)
@@ -89,18 +101,19 @@ def install(
     ]
 
     for task_name, days, start_time in tasks:
-        result = subprocess.run(
+        result = _run(
             [
                 "schtasks", "/Create",
                 "/TN", task_name,
-                "/TR", str(bat_path),
+                # Quote the action: schtasks stores /TR verbatim and Task
+                # Scheduler re-parses it as a command line at run time, so an
+                # unquoted path with a space (e.g. C:\Users\John Doe\...) breaks.
+                "/TR", f'"{bat_path}"',
                 "/SC", "WEEKLY",
                 "/D", days,
                 "/ST", start_time,
                 "/F",  # force overwrite if exists
-            ],
-            capture_output=True,
-            text=True,
+            ]
         )
         if result.returncode != 0:
             return False, f"Failed to create task {task_name}: {result.stderr.strip()}"
@@ -112,11 +125,7 @@ def uninstall() -> tuple[bool, str]:
     """Remove the Windows scheduled tasks."""
     errors = []
     for task_name in TASK_NAMES:
-        result = subprocess.run(
-            ["schtasks", "/Delete", "/TN", task_name, "/F"],
-            capture_output=True,
-            text=True,
-        )
+        result = _run(["schtasks", "/Delete", "/TN", task_name, "/F"])
         # Return code 1 with "cannot find" means it wasn't there — that's OK
         if result.returncode != 0 and "cannot find" not in result.stderr.lower():
             errors.append(f"{task_name}: {result.stderr.strip()}")
@@ -128,11 +137,7 @@ def uninstall() -> tuple[bool, str]:
 
 def _query_task(task_name: str) -> dict | None:
     """Query a single task and return parsed info, or None if not found."""
-    result = subprocess.run(
-        ["schtasks", "/Query", "/TN", task_name, "/FO", "CSV", "/V"],
-        capture_output=True,
-        text=True,
-    )
+    result = _run(["schtasks", "/Query", "/TN", task_name, "/FO", "CSV", "/V"])
     if result.returncode != 0:
         return None
 

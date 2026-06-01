@@ -1014,3 +1014,26 @@ class TestDryRunPlan:
         """Force mode sets force=True in the plan."""
         plan = sync_manager.dry_run_plan(days=3, force=True)
         assert plan["force"] is True
+
+    def test_dry_run_batch_metric_reports_full_window(self, sync_manager, db):
+        """Batch endpoints (sleep/stress/hrv in default mode) pull the whole
+        window in one call and re-upsert every day, so dry-run must report
+        fresh_skipped=0 and to_fetch=total_days even when old records exist —
+        not a misleading per-day skip count. Regression for the dry-run loop
+        applying the per-day freshness model uniformly."""
+        cur = db.connection.cursor()
+        today = date.today()
+        # Seed 5 old sleep rows, well beyond the 7-day freshness window.
+        for i in range(10, 15):
+            cur.execute(
+                "INSERT INTO sleep_daily (date) VALUES (?)",
+                ((today - timedelta(days=i)).isoformat(),),
+            )
+        db.connection.commit()
+
+        plan = sync_manager.dry_run_plan(days=30)  # default (batch) mode
+        sleep = plan["types"]["sleep"]
+        assert sleep["existing"] == 5
+        assert sleep["fresh_skipped"] == 0       # batch never skips
+        assert sleep["to_fetch"] == 31           # total_days = 30 + 1
+        assert sleep["api_calls"] == 1           # single batch call
