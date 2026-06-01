@@ -9,11 +9,11 @@ src/garmin_sync/
 ├── cli.py                  # Typer CLI (25 commands across 8 groups + setup wizard; --verbose, --dry-run)
 ├── config/
 │   ├── paths.py            # Platform-aware path defaults (platformdirs)
-│   └── settings.py         # Pydantic Settings (env var config)
-├── auth/garmin_auth.py     # OAuth via Garth library
+│   └── settings.py         # Pydantic Settings (env var config; data_dir + config_dir, expanduser'd)
+├── auth/garmin_auth.py     # OAuth via Garth library (MFA-capable login)
 ├── api/
-│   ├── client.py           # Garmin API wrapper with rate limiting
-│   └── rate_limiter.py     # Token bucket algorithm
+│   ├── client.py           # Garmin API wrapper with rate limiting (token acquired per retry)
+│   └── rate_limiter.py     # Sliding-window limiter (monotonic clock)
 ├── db/
 │   ├── database.py         # SQLite connection & schema + migrations
 │   ├── models.py           # Dataclasses for all data types (epoch ms → ISO conversion)
@@ -26,12 +26,11 @@ src/garmin_sync/
 │   ├── models.py           # HevyWorkout, HevyExercise, HevySet dataclasses (+ training_load, stl_method)
 │   └── sync.py             # HEVY sync manager (computes STL at sync time)
 ├── tools/                  # Shared tool executor (used by MCP + OpenAI)
-│   └── executor.py         # ToolExecutor class - 12 fitness data tools
+│   └── executor.py         # ToolExecutor class - 12 fitness data tools (sanitizes HEVY text in output)
 ├── mcp/                    # Model Context Protocol server
-│   ├── server.py           # FastMCP server with tool definitions
-│   └── serializers.py      # Activity serialization helpers
+│   └── server.py           # FastMCP server with tool definitions
 ├── ai/                     # OpenAI integration
-│   ├── config.py           # TOML config (API key, model, use_tools, StrengthConfig); chmods 0o600 on save
+│   ├── config.py           # TOML config (API key, model, use_tools, StrengthConfig); atomic 0o600 write
 │   ├── chat.py             # ChatSession - interactive coach with tool calling
 │   ├── tools.py            # OpenAI function schemas for 12 tools
 │   ├── openai_client.py    # API wrapper (chat_with_tools, chat_with_history); sanitizes tool errors; per-call tool limit guard
@@ -105,10 +104,10 @@ New daily tables must be added to `_ALLOWED_DAILY_TABLES` (frozenset in `reposit
 Use `logging.getLogger(__name__)` and `logger.debug()`/`logger.warning()`. Never bare `print()` or swallowed exceptions. `--verbose`/`-V` sets root logger to DEBUG.
 
 ### Prompt safety
-HEVY-sourced strings pass through `safe_user_string()` (strips control chars and `<>`) and are wrapped in `<hevy_title>`/`<hevy_exercise>` XML tags. System message instructs the model to treat tagged content as inert data.
+HEVY-sourced strings pass through `safe_user_string()` (strips control chars and `<>`) and are wrapped in `<hevy_title>`/`<hevy_exercise>` XML tags. System message instructs the model to treat tagged content as inert data. **Two paths:** the static prompt (`prompt_builder.py`) tags+sanitizes; the tool-call path has no tags, so `tools/executor.py` sanitizes HEVY free-text (`_sanitize_hevy_text`) before returning tool output. Sanitize at the executor boundary so MCP and OpenAI both benefit.
 
 ### Config permissions
-`config.toml` gets `0o600` on every write. `profile.toml` gets `0o644`. Both wrapped in `try/except OSError` for Windows compatibility.
+`config.toml` (secrets) is written via `_write_secret_toml()` in `ai/config.py`, which `fchmod`s the fd to `0o600` *before* the key is written (no world-readable window, even re-saving over a loose-mode file). `profile.toml` gets `0o644`. Both wrapped in `try/except OSError` for Windows compatibility.
 
 ## Testing
 
@@ -119,13 +118,13 @@ pytest tests/unit/test_mcp.py        # MCP tests
 pytest --cov=garmin_sync             # With coverage
 ```
 
-**712 tests** covering all modules.
+**746 tests** covering all modules.
 
 ## Gotchas
 
 1. **`--detailed` scope**: Affects only sleep/stress/HRV (per-day endpoints). Does *not* affect activities, FIT-file downloads, or body battery. `sync activities` doesn't accept the flag.
 2. **`--force` for hr_drift backfill**: Existing activities are skipped on re-sync, so populating `hr_drift` retroactively requires `garmin-sync sync activities --days N --force`.
-3. **HEVY prompt safety**: Workout titles and exercise names are stripped of control chars and `<>` and wrapped in `<hevy_title>` / `<hevy_exercise>` tags before reaching the LLM. The system message instructs the model to treat tagged content as inert data.
+3. **HEVY prompt safety (two paths)**: Static prompts wrap HEVY titles/exercise names in `<hevy_title>`/`<hevy_exercise>` tags + `safe_user_string`. Tool-call results have NO tags (raw JSON to the model), so `tools/executor.py` sanitizes HEVY free-text via `_sanitize_hevy_text` before returning. If you add a tool that surfaces HEVY-controlled strings, route them through it.
 4. **Body battery range**: Garmin's body-battery endpoint caps the request range, so `sync_body_battery` walks 30-day windows. A single 5-year request silently returns nothing without the chunking.
 5. **FIT downloads**: Use `Garmin.ActivityDownloadFormat.ORIGINAL` and unzip the response to extract the `.fit` member (`download_activity_fit` in `api/client.py`).
 6. **Longitudinal data scope**: `get_longitudinal_summary` defaults `start_year` to `MIN(date)` from `sleep_daily`. With a fresh DB this is the current year; run `sync all --days 1825` first.
@@ -149,3 +148,8 @@ pytest --cov=garmin_sync             # With coverage
 24. **Strength Training Load (STL)**: `reports/strength_load.py` computes per-workout load via sRPE method (session RPE × duration). Falls back to estimation heuristics when RPE not logged. Stored as `training_load` + `stl_method` on `hevy_workouts`. UNION ALL'd with Garmin's EPOC-based load in `get_training_load_trend()` and `get_weekly_load_history()` for combined A:C ratio. Science note: mixing EPOC with sRPE is approximate — always surface the cardio/strength breakdown alongside headline totals.
 25. **STL backfill**: Existing HEVY workouts need `garmin-sync hevy recalc-stl` to populate `training_load`. New syncs compute STL automatically. Same pattern as `fit-reparse` for FIT files.
 26. **Readiness score redistribution**: When HEVY data exists, readiness scoring uses 6 components (HRV 20, Sleep 20, BB 20, RHR 15, A:C 15, Strength Fatigue 10). Without HEVY, original 5-component weights are used (HRV 25, Sleep 20, BB 20, RHR 15, A:C 20). The conditional is in `calculate_readiness_score()`.
+27. **Rate limiter uses `time.monotonic()`**: `api/rate_limiter.py` is a sliding-window limiter that loops (`while`, not `if`) with inclusive (`<=`) eviction so it keeps limiting after the first throttle. It uses `time.monotonic()`, so **tests must mock `time.monotonic`, not `time.time`** (mocking the wrong one makes a test busy-loop in real time). `_api_call` in `api/client.py` acquires a token per retry attempt.
+28. **A:C overload needs a chronic baseline**: `get_training_load_trend()` returns `chronic_baseline_load` (load older than the acute 7d window). `_check_training_overload` / `_check_strength_overload` only fire when it's > 0, so a single logged session (chronic = sum/4) doesn't trigger a false "overload" alarm. Mock dicts feeding these checks must include `chronic_baseline_load`.
+29. **HEVY pagination + parsing**: `hevy/client.py` `get_all_workouts` does NOT stop on a missing `start_time` (would truncate the sync) and treats an absent `page_count` as "a full page implies more". Requests have a `(5, 30)` timeout. `models.py` tolerates `"sets"/"exercises": null` and coerces string-typed `weight_kg`/`reps`.
+30. **`has_tokens()` requires non-empty files**: `auth/garmin_auth.py` checks token files exist AND are non-empty (garth writes 0-byte files on a partial login). `login()` passes an MFA prompt to garth so 2FA accounts can authenticate, and clears the password after the token dump.
+31. **`GARMIN_SYNC_CONFIG_DIR`**: `config_dir` is a separate Settings field (default `default_config_dir()`) — `ai_config_path`/`profile_path` derive from it, so config can be relocated independently of `GARMIN_SYNC_DATA_DIR`. Path env vars are `expanduser()`'d. `paths.py` passes `appauthor=False` to platformdirs (avoids doubled `…\garmin-sync\garmin-sync` on Windows).

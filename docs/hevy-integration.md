@@ -76,7 +76,7 @@ garmin-sync computes a Strength Training Load per HEVY workout using the sRPE me
 
 **Checking your STL:**
 
-Ask the AI coach: "What's my training load breakdown?" — it shows cardio vs. strength contributions.
+Ask the AI coach: "What's my training load breakdown?" — it shows cardio vs. strength contributions. The weekly and monthly reports (`garmin-sync report weekly` / `monthly`) also include a "Cardio / Strength (7-day)" line and the split in their JSON output when strength load is present.
 
 **Backfilling existing workouts:**
 

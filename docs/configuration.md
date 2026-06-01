@@ -71,7 +71,8 @@ All settings can also be configured via environment variables (prefix `GARMIN_SY
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATA_DIR` | Platform default | Data storage directory |
+| `DATA_DIR` | Platform default | Data storage directory (DB, reports, FIT files, logs) |
+| `CONFIG_DIR` | Platform default | Directory for `config.toml` + `profile.toml` |
 | `GARTH_TOKEN_DIR` | `~/.garminconnect` | OAuth token directory |
 | `DATABASE_NAME` | `garmin.db` | SQLite database filename |
 | `DEFAULT_SYNC_DAYS` | `30` | Days to sync (1-365) |
@@ -83,7 +84,7 @@ All settings can also be configured via environment variables (prefix `GARMIN_SY
 
 ## Data storage paths
 
-All data is stored locally. Paths are managed by `platformdirs`. Override with `GARMIN_SYNC_DATA_DIR`.
+All data is stored locally. Paths are managed by `platformdirs`. Override the data location with `GARMIN_SYNC_DATA_DIR` and the config/profile location with `GARMIN_SYNC_CONFIG_DIR` (they are separate roots — relocating data does not move your API keys/profile, so set both if you want everything together). `~` in these values is expanded to your home directory.
 
 | Purpose | macOS / Linux | Windows |
 |---------|---------------|---------|

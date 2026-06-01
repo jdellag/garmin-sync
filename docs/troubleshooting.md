@@ -5,6 +5,9 @@
 **"Not authenticated" errors:**
 Re-run `garmin-sync auth login`. Garmin OAuth tokens expire periodically. Check current status with `garmin-sync auth status`.
 
+**Two-factor authentication (2FA):**
+If your Garmin account has 2FA enabled, `garmin-sync auth login` will prompt for a verification code (`Garmin MFA/2FA code:`) after your email/password — enter the code Garmin sends. Login is interactive, so run it in a terminal (not via the scheduler).
+
 ## Rate limiting
 
 **Sync is slow or hitting errors:**
