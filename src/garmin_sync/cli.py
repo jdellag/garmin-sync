@@ -348,6 +348,7 @@ def sync_all_cmd(
     console.print(f"Syncing data from {start_date} to {end_date}...")
     console.print()
 
+    sync_failed = False
     try:
         sync_manager = _get_sync_manager()
         results = sync_manager.sync_all(days=days, force=force, detailed=detailed)
@@ -407,6 +408,11 @@ def sync_all_cmd(
         if hevy_result:
             all_errors.extend(hevy_result.errors)
 
+        # A Garmin data type reporting failure should surface as a non-zero
+        # exit so scheduled runs can detect it. HEVY is intentionally
+        # non-fatal (handled with a warning above), so it doesn't count here.
+        sync_failed = any(not r.success for r in results.values())
+
         if all_errors:
             console.print("\n[yellow]Errors encountered:[/yellow]")
             for error in all_errors[:5]:  # Show first 5 errors
@@ -422,6 +428,9 @@ def sync_all_cmd(
         raise typer.Exit(1)
     except Exception as e:
         console.print(f"[red]Sync failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    if sync_failed:
         raise typer.Exit(1)
 
 
@@ -464,6 +473,12 @@ def sync_activities_cmd(
     except AuthenticationError as e:
         console.print(f"[red]Authentication error: {e}[/red]")
         raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Sync failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    if not result.success:
+        raise typer.Exit(1)
 
 
 @sync_app.command("health")
@@ -505,10 +520,13 @@ def sync_health_cmd(
         ]
 
         total_synced = 0
+        any_failed = False
         for name, sync_func in health_syncs:
             with console.status(f"Syncing {name}..."):
                 result = sync_func(start_date, end_date, force=force)
                 total_synced += result.records_synced
+                if not result.success:
+                    any_failed = True
                 status = "[green]OK[/green]" if result.success else "[yellow]Errors[/yellow]"
                 console.print(f"  {name}: {result.records_synced} records {status}")
 
@@ -516,6 +534,12 @@ def sync_health_cmd(
 
     except AuthenticationError as e:
         console.print(f"[red]Authentication error: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Sync failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    if any_failed:
         raise typer.Exit(1)
 
 

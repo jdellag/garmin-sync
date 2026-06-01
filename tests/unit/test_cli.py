@@ -247,6 +247,90 @@ class TestSyncCommands:
         assert result.exit_code == 1
         assert "Not authenticated" in result.output
 
+    @patch("garmin_sync.cli._get_sync_manager")
+    @patch("garmin_sync.cli.get_auth_manager")
+    @patch("garmin_sync.cli.get_settings")
+    def test_sync_activities_exits_nonzero_on_failure(self, mock_settings, mock_get_auth, mock_get_sync):
+        """A failed activities sync must exit non-zero so scheduled runs notice."""
+        from garmin_sync.sync.sync_manager import SyncResult
+
+        mock_auth = MagicMock()
+        mock_auth.has_tokens.return_value = True
+        mock_get_auth.return_value = mock_auth
+
+        bad = SyncResult("activities")
+        bad.add_error("Garmin 500")
+        mock_sync = MagicMock()
+        mock_sync.sync_activities.return_value = bad
+        mock_get_sync.return_value = mock_sync
+
+        result = runner.invoke(app, ["sync", "activities", "--days", "7"])
+        assert result.exit_code == 1
+
+    @patch("garmin_sync.cli._get_sync_manager")
+    @patch("garmin_sync.cli.get_auth_manager")
+    @patch("garmin_sync.cli.get_settings")
+    def test_sync_activities_clean_error_on_exception(self, mock_settings, mock_get_auth, mock_get_sync):
+        """A non-auth exception is reported cleanly (no traceback), exit 1."""
+        mock_auth = MagicMock()
+        mock_auth.has_tokens.return_value = True
+        mock_get_auth.return_value = mock_auth
+
+        mock_sync = MagicMock()
+        mock_sync.sync_activities.side_effect = RuntimeError("Garmin API 500")
+        mock_get_sync.return_value = mock_sync
+
+        result = runner.invoke(app, ["sync", "activities", "--days", "7"])
+        assert result.exit_code == 1
+        assert "Sync failed" in result.output
+        # The RuntimeError was caught, not leaked as an uncaught traceback.
+        assert not isinstance(result.exception, RuntimeError)
+
+    @patch("garmin_sync.cli._get_sync_manager")
+    @patch("garmin_sync.cli.get_auth_manager")
+    @patch("garmin_sync.cli.get_settings")
+    def test_sync_health_exits_nonzero_on_failure(self, mock_settings, mock_get_auth, mock_get_sync):
+        """A failed health-metric sync must exit non-zero."""
+        from garmin_sync.sync.sync_manager import SyncResult
+
+        mock_auth = MagicMock()
+        mock_auth.has_tokens.return_value = True
+        mock_get_auth.return_value = mock_auth
+
+        ok = SyncResult("ok")
+        bad = SyncResult("sleep")
+        bad.add_error("boom")
+        mock_sync = MagicMock()
+        for name in ("sync_daily_summaries", "sync_heart_rate", "sync_stress",
+                     "sync_hrv", "sync_body_battery", "sync_respiration", "sync_spo2"):
+            getattr(mock_sync, name).return_value = ok
+        mock_sync.sync_sleep.return_value = bad
+        mock_get_sync.return_value = mock_sync
+
+        result = runner.invoke(app, ["sync", "health", "--days", "7"])
+        assert result.exit_code == 1
+
+    @patch("garmin_sync.cli._get_sync_manager")
+    @patch("garmin_sync.cli.get_auth_manager")
+    @patch("garmin_sync.cli.get_settings")
+    def test_sync_all_exits_nonzero_on_partial_failure(self, mock_settings, mock_get_auth, mock_get_sync):
+        """sync all must exit non-zero if any Garmin data type failed."""
+        from garmin_sync.sync.sync_manager import SyncResult
+
+        mock_auth = MagicMock()
+        mock_auth.has_tokens.return_value = True
+        mock_get_auth.return_value = mock_auth
+
+        ok = SyncResult("activities")
+        bad = SyncResult("sleep")
+        bad.add_error("boom")
+        mock_sync = MagicMock()
+        mock_sync.sync_all.return_value = {"activities": ok, "sleep": bad}
+        mock_get_sync.return_value = mock_sync
+
+        result = runner.invoke(app, ["sync", "all", "--days", "7"])
+        assert result.exit_code == 1
+
 
 class TestReportCommands:
     """Test report CLI commands."""

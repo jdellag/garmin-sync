@@ -73,8 +73,14 @@ class ReportGenerator:
             Formatted markdown report or structured dictionary for JSON
         """
         today = date.today()
-        year = year or today.year
-        month = month or today.month
+        # Use `is None` (not falsy) so an explicit 0 isn't silently treated as
+        # "current" — then range-validate rather than producing a wrong month.
+        year = today.year if year is None else year
+        month = today.month if month is None else month
+        if not 1 <= month <= 12:
+            raise ValueError(f"Invalid month {month}; must be 1-12")
+        if year < 1900:
+            raise ValueError(f"Invalid year {year}")
 
         if format == "json":
             return self.formatter.generate_monthly_json(year, month)

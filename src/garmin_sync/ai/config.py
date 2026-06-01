@@ -10,6 +10,7 @@ For backward compatibility, ``load_config`` falls back to reading
 """
 
 import logging
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -175,12 +176,17 @@ def load_config(
         sync_days=hevy_section.get("sync_days", 30),
     )
 
-    # Strength: merge user overrides from [strength] over defaults
+    # Strength: merge user overrides from [strength] over defaults.
+    # Accept only positive ints — reject booleans (isinstance(True, int) is
+    # True in Python) and non-positive targets, which would otherwise poison
+    # the muscle-group target comparisons and AI prompt.
     strength_section = profile_data.get("strength", {})
     merged_targets = dict(DEFAULT_WEEKLY_SET_TARGETS)
     for group, sets in strength_section.items():
-        if isinstance(sets, int):
-            merged_targets[group] = sets
+        if isinstance(sets, bool) or not isinstance(sets, int) or sets <= 0:
+            logger.warning("Ignoring invalid strength target for %r: %r", group, sets)
+            continue
+        merged_targets[group] = sets
     strength_config = StrengthConfig(weekly_set_targets=merged_targets)
 
     return AIConfig(
@@ -194,6 +200,27 @@ def load_config(
         hevy=hevy_config,
         strength=strength_config,
     )
+
+
+def _write_secret_toml(path: Path, data: dict) -> None:
+    """Write a TOML file that contains secrets with owner-only (0o600) perms.
+
+    The descriptor is tightened to 0o600 *before* the secret is written, so the
+    API key is never momentarily present in a world-readable file — this also
+    covers re-saving over a pre-existing loose-mode (0o644) file, which
+    ``open()`` + later ``chmod()`` would leave briefly exposed.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError):
+            pass  # fchmod unavailable (e.g. Windows) — fall back to chmod below
+        tomli_w.dump(data, f)
+    try:
+        path.chmod(0o600)
+    except OSError as e:
+        print(f"Warning: could not tighten permissions on {path}: {e}", file=sys.stderr)
 
 
 def save_config(
@@ -234,14 +261,12 @@ def save_config(
         },
     }
 
-    with open(path, "wb") as f:
-        tomli_w.dump(config_data, f)
+    _write_secret_toml(path, config_data)
 
     try:
-        path.chmod(0o600)
         path.parent.chmod(0o700)
     except OSError as e:
-        print(f"Warning: could not tighten permissions on {path}: {e}", file=sys.stderr)
+        print(f"Warning: could not tighten permissions on {path.parent}: {e}", file=sys.stderr)
 
     # --- profile.toml (training profile) ---
     profile_path.parent.mkdir(parents=True, exist_ok=True)
@@ -312,14 +337,8 @@ def migrate_config_if_needed(
     except OSError:
         pass
 
-    # Rewrite config.toml without [analysis]
+    # Rewrite config.toml without [analysis] (secrets — write at 0o600).
     del config_data["analysis"]
-    with open(config_path, "wb") as f:
-        tomli_w.dump(config_data, f)
-
-    try:
-        config_path.chmod(0o600)
-    except OSError:
-        pass
+    _write_secret_toml(config_path, config_data)
 
     return True

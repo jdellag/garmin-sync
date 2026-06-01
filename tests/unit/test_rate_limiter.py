@@ -85,10 +85,10 @@ class TestRateLimiter:
         assert limiter.get_status()["calls_last_minute"] == 1
 
     @patch("garmin_sync.api.rate_limiter.time.sleep")
-    @patch("garmin_sync.api.rate_limiter.time.time")
-    def test_minute_limit_wait(self, mock_time, mock_sleep):
+    @patch("garmin_sync.api.rate_limiter.time.monotonic")
+    def test_minute_limit_wait(self, mock_monotonic, mock_sleep):
         """Test waiting when minute limit is reached."""
-        # Set up time mock - start at time 100
+        # Set up monotonic-clock mock - start at time 100
         current_time = [100.0]
 
         def get_time():
@@ -97,7 +97,7 @@ class TestRateLimiter:
         def do_sleep(seconds):
             current_time[0] += seconds
 
-        mock_time.side_effect = get_time
+        mock_monotonic.side_effect = get_time
         mock_sleep.side_effect = do_sleep
 
         limiter = RateLimiter(calls_per_minute=2, calls_per_hour=100)
@@ -123,8 +123,8 @@ class TestRateLimiter:
             limiter.acquire()
 
         # Simulate time passing by manipulating internal state
-        # Move all calls to 61 seconds ago
-        old_time = time.time() - 61
+        # Move all calls to 61 seconds ago (limiter uses a monotonic clock)
+        old_time = time.monotonic() - 61
         limiter._minute_calls.clear()
         limiter._hour_calls.clear()
         for _ in range(3):
@@ -134,6 +134,31 @@ class TestRateLimiter:
         # Get status should clean old calls
         status = limiter.get_status()
         assert status["calls_last_minute"] == 0
+
+    @patch("garmin_sync.api.rate_limiter.time.sleep")
+    @patch("garmin_sync.api.rate_limiter.time.monotonic")
+    def test_sustained_burst_never_exceeds_limit(self, mock_monotonic, mock_sleep):
+        """Regression: after the first throttle the limiter must keep limiting.
+        The old `if` (not `while`) + strict `<` eviction let a burst pack up to
+        2N-1 calls into a single 60s window."""
+        clock = [1000.0]
+        mock_monotonic.side_effect = lambda: clock[0]
+        mock_sleep.side_effect = lambda s: clock.__setitem__(0, clock[0] + s)
+
+        limiter = RateLimiter(calls_per_minute=3, calls_per_hour=10000)
+        recorded = []
+        for _ in range(10):
+            limiter.acquire()
+            recorded.append(clock[0])
+
+        # No rolling 60s window may contain more than the limit.
+        worst = max(sum(1 for x in recorded if t - 60 < x <= t) for t in recorded)
+        assert worst <= 3, f"a 60s window held {worst} calls (limit 3)"
+
+    def test_zero_calls_per_minute_does_not_crash(self):
+        """cpm<=0 must not IndexError on an empty deque (defensive)."""
+        limiter = RateLimiter(calls_per_minute=0, calls_per_hour=0)
+        assert limiter.acquire() == 0.0
 
 
 class TestRetryWithBackoff:

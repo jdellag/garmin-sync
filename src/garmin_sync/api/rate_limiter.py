@@ -34,14 +34,19 @@ class RateLimiter:
         self._lock = Lock()
 
     def _clean_old_calls(self, now: float) -> None:
-        """Remove expired call timestamps."""
+        """Remove expired call timestamps.
+
+        Uses ``<=`` so a call exactly one window old is evicted — otherwise a
+        timestamp sitting exactly on the boundary survives and the window can
+        hold one more call than the limit allows.
+        """
         minute_ago = now - 60
         hour_ago = now - 3600
 
-        while self._minute_calls and self._minute_calls[0] < minute_ago:
+        while self._minute_calls and self._minute_calls[0] <= minute_ago:
             self._minute_calls.popleft()
 
-        while self._hour_calls and self._hour_calls[0] < hour_ago:
+        while self._hour_calls and self._hour_calls[0] <= hour_ago:
             self._hour_calls.popleft()
 
     def wait_if_needed(self) -> float:
@@ -53,29 +58,35 @@ class RateLimiter:
         total_wait = 0.0
 
         with self._lock:
-            now = time.time()
+            now = time.monotonic()
             self._clean_old_calls(now)
 
-            # Check minute limit
-            if len(self._minute_calls) >= self.calls_per_minute:
+            # Minute limit — loop (not a single if) so we re-check after each
+            # wait/evict; otherwise a burst slips through once one wait happens.
+            while self.calls_per_minute > 0 and len(self._minute_calls) >= self.calls_per_minute:
                 wait_time = 60 - (now - self._minute_calls[0])
-                if wait_time > 0:
-                    total_wait += wait_time
-                    time.sleep(wait_time)
-                    now = time.time()
+                if wait_time <= 0:
+                    # Oldest call is already outside the window — evict & re-check.
                     self._clean_old_calls(now)
+                    continue
+                total_wait += wait_time
+                time.sleep(wait_time)
+                now = time.monotonic()
+                self._clean_old_calls(now)
 
-            # Check hour limit
-            if len(self._hour_calls) >= self.calls_per_hour:
+            # Hour limit — same loop structure.
+            while self.calls_per_hour > 0 and len(self._hour_calls) >= self.calls_per_hour:
                 wait_time = 3600 - (now - self._hour_calls[0])
-                if wait_time > 0:
-                    total_wait += wait_time
-                    time.sleep(wait_time)
-                    now = time.time()
+                if wait_time <= 0:
                     self._clean_old_calls(now)
+                    continue
+                total_wait += wait_time
+                time.sleep(wait_time)
+                now = time.monotonic()
+                self._clean_old_calls(now)
 
             # Record this call
-            call_time = time.time()
+            call_time = time.monotonic()
             self._minute_calls.append(call_time)
             self._hour_calls.append(call_time)
 
@@ -98,7 +109,7 @@ class RateLimiter:
             Dict with current call counts and limits.
         """
         with self._lock:
-            now = time.time()
+            now = time.monotonic()
             self._clean_old_calls(now)
 
             return {

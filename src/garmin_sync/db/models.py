@@ -6,14 +6,22 @@ from typing import Optional
 
 
 def _epoch_ms_to_iso(val) -> Optional[str]:
-    """Convert epoch milliseconds to ISO 8601 UTC string, or None."""
+    """Convert epoch milliseconds to an ISO 8601 UTC string, or None.
+
+    Garmin usually returns these timestamps as epoch milliseconds, but some
+    payloads/fields are already ISO strings — pass those through unchanged
+    rather than discarding them (``int("2024-…")`` would raise and lose data).
+    """
     if val is None:
         return None
+    if isinstance(val, str):
+        # Already an ISO-ish timestamp (or empty) — return as-is, not None.
+        return val or None
     try:
         return datetime.fromtimestamp(int(val) / 1000, tz=timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
-    except (ValueError, TypeError, OSError):
+    except (ValueError, TypeError, OSError, OverflowError):
         return None
 
 

@@ -277,14 +277,19 @@ class ChatSession:
         messages.extend(cache.garmin_messages)
         messages.extend(cache.hevy_messages)
 
-        # 5. Chat history (always fresh - it grows each message)
+        # 5. Chat history (always fresh - it grows each message).
+        # Walk newest-first so that when history exceeds the budget we drop the
+        # OLDEST turns and keep the most recent ones (including the question the
+        # user just asked), then restore chronological order for the model.
         chat_messages = self.repo.get_chat_history(limit=100)
-        for msg in chat_messages:
+        kept: list[dict] = []
+        for msg in reversed(chat_messages):
             msg_tokens = msg.token_estimate or len(msg.content) // 4
             if token_count + msg_tokens > self.CONTEXT_BUDGET:
-                break  # Stop adding messages if we exceed budget
-            messages.append({"role": msg.role, "content": msg.content})
+                break  # Older messages beyond budget are dropped
+            kept.append({"role": msg.role, "content": msg.content})
             token_count += msg_tokens
+        messages.extend(reversed(kept))
 
         return messages
 

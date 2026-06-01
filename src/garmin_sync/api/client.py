@@ -57,14 +57,15 @@ class GarminClient:
         Returns:
             Response from API call
         """
-        self._rate_limiter.acquire()
-
         @retry_with_backoff(
             max_retries=3,
             base_delay=1.0,
             exceptions=(Exception,),
         )
         def call():
+            # Acquire a token per attempt so retries are throttled too —
+            # otherwise a retry storm (e.g. against a 429) bypasses the limiter.
+            self._rate_limiter.acquire()
             method = getattr(self._client, method_name)
             return method(*args, **kwargs)
 
@@ -287,7 +288,7 @@ class GarminClient:
         Returns:
             List of daily step data dictionaries
         """
-        self._rate_limiter.acquire()
+        # _api_call already acquires a rate-limiter token; don't double-count.
         return self._api_call("get_daily_steps", start_date.isoformat(), end_date.isoformat()) or []
 
     def get_body_battery_batch(self, start_date: date, end_date: date) -> list[dict]:

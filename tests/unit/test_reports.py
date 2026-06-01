@@ -442,6 +442,13 @@ class TestReportGenerator:
         assert isinstance(report, str)
         assert "January 2024" in report
 
+    def test_generate_monthly_report_rejects_invalid_month(self, db_with_data):
+        """An explicit month=0 must error, not silently use the current month."""
+        import pytest
+        generator = ReportGenerator(db_with_data)
+        with pytest.raises(ValueError):
+            generator.generate_monthly_report(year=2024, month=0)
+
     def test_export_activities_json(self, db_with_data, temp_dir):
         """Test exporting activities to JSON."""
         generator = ReportGenerator(db_with_data)

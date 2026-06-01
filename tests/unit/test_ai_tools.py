@@ -342,6 +342,46 @@ class TestChatWithTools:
         assert result == "Based on the data..."
         mock_executor.execute.assert_called_once_with("get_recovery_status", {})
 
+    def test_chat_with_tools_malformed_json_arguments(self, mock_executor):
+        """A tool call with invalid JSON arguments must not crash the turn: it
+        yields a synthetic error result for its tool_call_id so the model can
+        recover. Regression for json.loads sitting outside the try/except."""
+        from garmin_sync.ai.openai_client import chat_with_tools
+
+        bad_call = MagicMock()
+        bad_call.id = "call_bad"
+        bad_call.function.name = "get_recovery_status"
+        bad_call.function.arguments = "{not valid json"  # malformed
+
+        first_response = MagicMock()
+        first_response.choices = [MagicMock()]
+        first_response.choices[0].message.content = None
+        first_response.choices[0].message.tool_calls = [bad_call]
+
+        second_response = MagicMock()
+        second_response.choices = [MagicMock()]
+        second_response.choices[0].message.content = "Recovered."
+        second_response.choices[0].message.tool_calls = None
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [first_response, second_response]
+
+        with patch("garmin_sync.ai.openai_client.OpenAI", return_value=mock_client):
+            result = chat_with_tools(
+                messages=[{"role": "user", "content": "status?"}],
+                tools=TOOLS,
+                api_key="test-key",
+                tool_executor=mock_executor,
+            )
+
+        assert result == "Recovered."             # turn survived, no exception
+        mock_executor.execute.assert_not_called()  # never reached execution
+        # The follow-up request must still answer the bad call's tool_call_id.
+        second_messages = mock_client.chat.completions.create.call_args_list[1].kwargs["messages"]
+        tool_msgs = [m for m in second_messages if m.get("role") == "tool"]
+        assert any(m["tool_call_id"] == "call_bad" for m in tool_msgs)
+        assert any("invalid JSON" in m["content"] for m in tool_msgs)
+
     def test_chat_with_tools_max_calls_limit(self, mock_executor):
         """Test that tool calls are limited to max_tool_calls."""
         from garmin_sync.ai.openai_client import chat_with_tools

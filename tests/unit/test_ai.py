@@ -404,6 +404,29 @@ class TestChatSessionCaching:
         # Cache should have been rebuilt (new timestamp)
         assert second_timestamp > first_timestamp
 
+    def test_history_truncation_keeps_newest(self, chat_session, mock_repository):
+        """When chat history exceeds the context budget, the NEWEST turns must
+        be kept (including the question just asked) and the oldest dropped.
+        Regression for the loop that walked oldest-first and dropped the newest."""
+        from types import SimpleNamespace
+
+        # get_chat_history returns oldest-first. Make each turn large enough
+        # that only the last few fit within CONTEXT_BUDGET.
+        big = chat_session.CONTEXT_BUDGET // 3
+        history = [
+            SimpleNamespace(role="user", content=f"msg{i}", token_estimate=big)
+            for i in range(5)  # msg0 (oldest) .. msg4 (newest)
+        ]
+        mock_repository.get_chat_history.return_value = history
+
+        contents = [m["content"] for m in chat_session.build_context_messages()]
+
+        assert "msg4" in contents, "newest message (current question) was dropped"
+        assert "msg0" not in contents, "oldest message kept instead of newest"
+        # Kept history stays in chronological order.
+        kept = [c for c in contents if c.startswith("msg")]
+        assert kept == sorted(kept)
+
     def test_cache_invalidated_on_hevy_count_change(self, chat_session, mock_repository):
         """Test that cache is invalidated when HEVY workout count changes."""
         # Build initial cache

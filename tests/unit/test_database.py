@@ -869,3 +869,17 @@ class TestSleepEpochConversion:
 
         assert sleep.sleep_start is None
         assert sleep.sleep_end is None
+
+    def test_epoch_helper_passes_through_iso_strings(self):
+        """Garmin may return an already-ISO timestamp; it must pass through
+        rather than being discarded (int('2024-..')/1000 would raise -> None)."""
+        from garmin_sync.db.models import _epoch_ms_to_iso
+
+        # Already-ISO input passes through unchanged (regression).
+        assert _epoch_ms_to_iso("2024-01-25T07:00:00.0") == "2024-01-25T07:00:00.0"
+        # Epoch-ms still converts to a Z-suffixed UTC string.
+        converted = _epoch_ms_to_iso(1706223000000)
+        assert converted.endswith("Z") and "2024-01-2" in converted
+        # None / overflow degrade to None, never crash.
+        assert _epoch_ms_to_iso(None) is None
+        assert _epoch_ms_to_iso(10 ** 30) is None

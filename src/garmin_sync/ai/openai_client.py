@@ -226,7 +226,28 @@ def chat_with_tools(
 
                 tool_call_count += 1
                 tool_name = tool_call.function.name
-                arguments = json.loads(tool_call.function.arguments)
+
+                # The model occasionally emits invalid JSON for tool arguments.
+                # Parse defensively: a malformed call must still produce a tool
+                # result for its tool_call_id (the API requires one per call),
+                # so the model can recover instead of crashing the whole turn.
+                try:
+                    arguments = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError as e:
+                    logger.debug(
+                        "Tool %r received malformed JSON arguments: %s",
+                        tool_name, e, exc_info=True,
+                    )
+                    working_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps({
+                            "error": f"{tool_name}: invalid JSON arguments ({e})",
+                            "error_type": "InvalidArguments",
+                            "tool": tool_name,
+                        }),
+                    })
+                    continue
 
                 if tool_executor is None:
                     raise ValueError(

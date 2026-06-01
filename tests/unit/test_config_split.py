@@ -197,6 +197,40 @@ class TestSaveConfig:
         assert config_mode == 0o600
         assert profile_mode == 0o644
 
+    def test_config_never_world_readable_during_write(self, config_path, profile_path, monkeypatch):
+        """Regression: the API key must never sit in a world-readable file.
+        Re-save over a pre-existing 0o644 file and assert the mode is ALREADY
+        0o600 at the instant the secret is written (not merely chmod'd after)."""
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("old = 1")
+        config_path.chmod(0o644)  # pre-existing loose-mode file
+
+        import garmin_sync.ai.config as cfg
+        orig_dump = cfg.tomli_w.dump
+        modes_at_write = []
+
+        def spy_dump(data, f):
+            modes_at_write.append(stat.S_IMODE(config_path.stat().st_mode))
+            return orig_dump(data, f)
+
+        monkeypatch.setattr(cfg.tomli_w, "dump", spy_dump)
+        save_config(AIConfig(api_key="sk-secret"), config_path, profile_path)
+
+        # First dump is config.toml (the secret file); it must be 0o600 already.
+        assert modes_at_write[0] == 0o600
+        assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
+
+    def test_strength_rejects_invalid_targets(self, config_path, profile_path):
+        """bool / negative / zero strength targets are ignored (isinstance(True,
+        int) is True in Python); valid positive ints are applied."""
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        profile_path.write_text(
+            "[strength]\nchest = true\nbiceps = -5\nlats = 0\nquadriceps = 16\n"
+        )
+        cfg = load_config(config_path, profile_path)
+        assert cfg.strength.get_target("chest") == 10        # bool ignored, default kept
+        assert cfg.strength.get_target("quadriceps") == 16   # valid override applied
+
     def test_roundtrip(self, config_path, profile_path):
         original = AIConfig(
             api_key="sk-round",
