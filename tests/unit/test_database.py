@@ -883,3 +883,55 @@ class TestSleepEpochConversion:
         # None / overflow degrade to None, never crash.
         assert _epoch_ms_to_iso(None) is None
         assert _epoch_ms_to_iso(10 ** 30) is None
+
+
+class TestHevyUpsertAndDateFilters:
+    """Regression: HEVY re-upsert column coverage + date-only end_date bounds."""
+
+    @pytest.fixture
+    def repo(self):
+        db = Database(":memory:")
+        db.initialize()
+        db.migrate()
+        return Repository(db)
+
+    def _wk(self, title, start, end, n_ex):
+        from garmin_sync.hevy.models import HevyWorkout, HevyExercise, HevySet
+        exs = [
+            HevyExercise(
+                exercise_template_id=f"t{i}", exercise_name=f"Ex{i}",
+                sets=[HevySet(set_index=0, set_type="normal", weight_kg=60, reps=10)],
+            )
+            for i in range(n_ex)
+        ]
+        return HevyWorkout(id="w1", title=title, start_time=start, end_time=end, exercises=exs)
+
+    def test_reupsert_updates_time_and_count_columns(self, repo):
+        """Re-upserting an edited workout updates start_time, duration_seconds
+        and exercise_count — these were omitted from ON CONFLICT DO UPDATE and
+        went stale (internally inconsistent with the child exercise rows)."""
+        repo.upsert_hevy_workout(
+            self._wk("A", "2026-05-01T10:00:00+00:00", "2026-05-01T11:00:00+00:00", 1)
+        )
+        repo.upsert_hevy_workout(
+            self._wk("A edited", "2026-05-01T09:00:00+00:00", "2026-05-01T11:00:00+00:00", 2)
+        )
+        row = repo.db.connection.execute(
+            "SELECT start_time, duration_seconds, exercise_count "
+            "FROM hevy_workouts WHERE id='w1'"
+        ).fetchone()
+        assert row["duration_seconds"] == 7200       # was 3600
+        assert row["exercise_count"] == 2            # was 1
+        assert row["start_time"].startswith("2026-05-01T09")
+
+    def test_get_activities_date_only_end_date_includes_day(self, repo):
+        """A date-only end_date must include same-day activities (regression for
+        the lexical comparison dropping the end day)."""
+        repo.db.connection.execute(
+            "INSERT INTO activities (activity_id, start_time, start_time_local, "
+            "training_load) VALUES (?, ?, ?, ?)",
+            ("a1", "2026-05-16T07:00:00", "2026-05-16T07:00:00", 100.0),
+        )
+        repo.db.connection.commit()
+        got = repo.get_activities(start_date="2026-05-10", end_date="2026-05-16")
+        assert len(got) == 1

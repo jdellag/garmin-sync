@@ -127,6 +127,13 @@ class Settings(BaseSettings):
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         self.garth_token_dir.mkdir(parents=True, exist_ok=True)
+        # The token dir holds OAuth credentials — keep it owner-only, not at
+        # the process umask (login() also tightens it, but this covers the
+        # window before the first login).
+        try:
+            self.garth_token_dir.chmod(0o700)
+        except OSError:
+            pass  # e.g. Windows
 
 
 @lru_cache

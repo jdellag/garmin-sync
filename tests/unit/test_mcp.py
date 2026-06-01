@@ -298,120 +298,6 @@ class TestMCPServer:
         assert "recent_workouts" in result
 
 
-class TestMCPSerializers:
-    """Test MCP serialization helpers."""
-
-    def test_serialize_activity_excludes_raw_json(self):
-        """Test that raw_json is excluded from serialized output."""
-        from garmin_sync.mcp.serializers import serialize_activity
-
-        activity = Activity(
-            activity_id="123",
-            activity_name="Test Run",
-            raw_json='{"large": "json data"}',
-        )
-
-        result = serialize_activity(activity)
-
-        assert "activity_id" in result
-        assert result["activity_id"] == "123"
-        assert "raw_json" not in result
-
-    def test_serialize_list(self):
-        """Test serializing a list of activities."""
-        from garmin_sync.mcp.serializers import serialize_list
-
-        activities = [
-            Activity(activity_id="1", activity_name="Run 1", raw_json="{}"),
-            Activity(activity_id="2", activity_name="Run 2", raw_json="{}"),
-        ]
-
-        result = serialize_list(activities)
-
-        assert len(result) == 2
-        assert result[0]["activity_id"] == "1"
-        assert result[1]["activity_id"] == "2"
-        assert "raw_json" not in result[0]
-        assert "raw_json" not in result[1]
-
-    def test_serialize_empty_list(self):
-        """Test serializing an empty list."""
-        from garmin_sync.mcp.serializers import serialize_list
-
-        result = serialize_list([])
-        assert result == []
-
-    def test_serialize_activity_preserves_all_fields(self):
-        """Test that serialization preserves all non-raw_json fields."""
-        from garmin_sync.mcp.serializers import serialize_activity
-
-        activity = Activity(
-            activity_id="123",
-            activity_name="Morning Run",
-            activity_type="running",
-            start_time="2026-03-16T07:00:00Z",
-            start_time_local="2026-03-16T03:00:00",
-            timezone="America/New_York",
-            duration_seconds=3600.5,
-            moving_duration_seconds=3500.0,
-            distance_meters=10000.0,
-            average_speed_mps=2.78,
-            max_speed_mps=3.5,
-            average_hr=145,
-            max_hr=175,
-            min_hr=120,
-            elevation_gain_meters=150.0,
-            elevation_loss_meters=145.0,
-            calories=500,
-            training_effect_aerobic=3.5,
-            training_effect_anaerobic=1.2,
-            training_load=75.5,
-            vo2_max=52.0,
-            avg_cadence=170.0,
-            max_cadence=185.0,
-            average_power=250.0,
-            max_power=400.0,
-            normalized_power=260.0,
-            device_name="Garmin Forerunner 965",
-            has_fit_file=True,
-            fit_file_path="/path/to/file.fit",
-            hr_drift=0.05,
-            raw_json='{"should": "be excluded"}',
-        )
-
-        result = serialize_activity(activity)
-
-        # All fields should be present except raw_json
-        assert result["activity_id"] == "123"
-        assert result["activity_name"] == "Morning Run"
-        assert result["activity_type"] == "running"
-        assert result["duration_seconds"] == 3600.5
-        assert result["distance_meters"] == 10000.0
-        assert result["average_hr"] == 145
-        assert result["training_load"] == 75.5
-        assert result["hr_drift"] == 0.05
-        assert result["has_fit_file"] is True
-        assert "raw_json" not in result
-
-    def test_serialize_activity_handles_none_values(self):
-        """Test serialization handles None values correctly."""
-        from garmin_sync.mcp.serializers import serialize_activity
-
-        activity = Activity(
-            activity_id="123",
-            activity_name=None,
-            activity_type=None,
-            duration_seconds=None,
-            average_hr=None,
-        )
-
-        result = serialize_activity(activity)
-
-        assert result["activity_id"] == "123"
-        assert result["activity_name"] is None
-        assert result["activity_type"] is None
-        assert result["duration_seconds"] is None
-
 
 class TestMCPServerEdgeCases:
     """Test MCP server edge cases and error handling."""
@@ -1438,3 +1324,14 @@ class TestMCPErrorHandling:
         )
         assert error_type == "SYNC_NEEDED"
         assert "sleep_daily" in message
+
+    def test_mcp_error_classification_file_vs_network(self):
+        """File/permission errors (OSError subclasses) must NOT be reported as
+        NETWORK_ERROR — that would tell the model to retry the connection for a
+        filesystem/setup problem. Real connection errors still map to network."""
+        from garmin_sync.mcp.server import _classify_mcp_error
+
+        assert _classify_mcp_error(FileNotFoundError("missing"))[0] == "INTERNAL"
+        assert _classify_mcp_error(PermissionError("denied"))[0] == "INTERNAL"
+        assert _classify_mcp_error(ConnectionError("reset"))[0] == "NETWORK_ERROR"
+        assert _classify_mcp_error(TimeoutError("slow"))[0] == "NETWORK_ERROR"

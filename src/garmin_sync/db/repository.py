@@ -116,8 +116,12 @@ class Repository:
             query += " AND start_time >= ?"
             params.append(start_date)
         if end_date:
+            # A date-only bound ("2026-05-16") sorts before same-day timestamps
+            # like "2026-05-16T07:00:00", which would drop the whole end day.
+            # Extend a bare date to end-of-day so it's inclusive.
+            bound = end_date if "T" in end_date else end_date + "T23:59:59.999999"
             query += " AND start_time <= ?"
-            params.append(end_date)
+            params.append(bound)
         if activity_type:
             query += " AND activity_type = ?"
             params.append(activity_type)
@@ -1012,9 +1016,13 @@ class Repository:
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     description = excluded.description,
+                    start_time = excluded.start_time,
+                    end_time = excluded.end_time,
+                    duration_seconds = excluded.duration_seconds,
                     volume_kg = excluded.volume_kg,
                     set_count = excluded.set_count,
                     rep_count = excluded.rep_count,
+                    exercise_count = excluded.exercise_count,
                     training_load = COALESCE(excluded.training_load, hevy_workouts.training_load),
                     stl_method = COALESCE(excluded.stl_method, hevy_workouts.stl_method),
                     raw_json = excluded.raw_json,
@@ -1129,8 +1137,11 @@ class Repository:
             query += " AND start_time >= ?"
             params.append(start_date)
         if end_date:
+            # Extend a date-only bound to end-of-day so same-day timestamps
+            # aren't dropped by the lexical string comparison (see get_activities).
+            bound = end_date if "T" in end_date else end_date + "T23:59:59.999999"
             query += " AND start_time <= ?"
-            params.append(end_date)
+            params.append(bound)
 
         query += " ORDER BY start_time DESC LIMIT ?"
         params.append(limit)
@@ -1495,27 +1506,29 @@ class Repository:
         # SQLite's UNIQUE treats NULL != NULL, so ON CONFLICT never
         # matches rows where exercise_name IS NULL (all cardio PRs).
         # Delete the old row first so the INSERT always succeeds cleanly.
-        if existing:
+        # Wrap both writes in a transaction so they commit atomically (and so a
+        # bare connection.commit() can't flush unrelated pending writes).
+        with self.db.transaction() as cursor:
+            if existing:
+                cursor.execute(
+                    """
+                    DELETE FROM personal_records
+                    WHERE category = ? AND metric_name = ?
+                        AND COALESCE(exercise_name, '') = COALESCE(?, '')
+                    """,
+                    (category, metric_name, exercise_name),
+                )
+
             cursor.execute(
                 """
-                DELETE FROM personal_records
-                WHERE category = ? AND metric_name = ?
-                    AND COALESCE(exercise_name, '') = COALESCE(?, '')
+                INSERT INTO personal_records
+                    (category, metric_name, value, previous_value,
+                     activity_id, workout_id, exercise_name, date_set)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (category, metric_name, exercise_name),
+                (category, metric_name, value, old_val,
+                 activity_id, workout_id, exercise_name, date_set),
             )
-
-        cursor.execute(
-            """
-            INSERT INTO personal_records
-                (category, metric_name, value, previous_value,
-                 activity_id, workout_id, exercise_name, date_set)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (category, metric_name, value, old_val,
-             activity_id, workout_id, exercise_name, date_set),
-        )
-        self.db.connection.commit()
 
         return {
             "category": category,

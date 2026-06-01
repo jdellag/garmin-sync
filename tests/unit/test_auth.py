@@ -69,11 +69,41 @@ class TestGarminAuthManager:
         result = manager.login("test@example.com", "password123")
 
         assert result is True
-        # Garmin client is created with credentials
-        mock_garmin_class.assert_called_once_with("test@example.com", "password123")
+        # Garmin client is created with credentials (+ an MFA prompt callback).
+        assert mock_garmin_class.call_count == 1
+        call = mock_garmin_class.call_args
+        assert call.args == ("test@example.com", "password123")
+        assert callable(call.kwargs.get("prompt_mfa"))
         mock_client.login.assert_called_once()
         # Tokens are saved using client's garth instance
         mock_client.garth.dump.assert_called_once()
+        # Password is dropped from the client after the token dump.
+        assert mock_client.password is None
+
+    @patch("garmin_sync.auth.garmin_auth.Garmin")
+    def test_login_uses_provided_mfa_prompt(self, mock_garmin_class, temp_dir):
+        """A caller-supplied MFA prompt is forwarded to Garmin so 2FA accounts
+        can authenticate instead of failing opaquely."""
+        mock_client = MagicMock()
+        mock_garmin_class.return_value = mock_client
+
+        def my_prompt():
+            return "123456"
+
+        manager = GarminAuthManager(token_dir=temp_dir / "tokens")
+        manager.login("e@x.com", "pw", prompt_mfa=my_prompt)
+
+        assert mock_garmin_class.call_args.kwargs["prompt_mfa"] is my_prompt
+
+    def test_has_tokens_false_for_empty_files(self, temp_dir):
+        """0-byte token files (from an interrupted login) are not 'usable'."""
+        token_dir = temp_dir / "tokens"
+        token_dir.mkdir(parents=True)
+        (token_dir / "oauth1_token.json").write_text("")
+        (token_dir / "oauth2_token.json").write_text("")
+
+        manager = GarminAuthManager(token_dir=token_dir)
+        assert manager.has_tokens() is False
 
     @patch("garmin_sync.auth.garmin_auth.Garmin")
     def test_login_failure(self, mock_garmin_class, temp_dir):

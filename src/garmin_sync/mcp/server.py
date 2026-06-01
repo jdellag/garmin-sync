@@ -31,6 +31,11 @@ def _classify_mcp_error(e: Exception) -> tuple[str, str]:
         return "DATA_MISSING", str(e)
     if isinstance(e, sqlite3.OperationalError):
         return "SYNC_NEEDED", f"Database error: {e}. Try running sync_garmin_data first."
+    # File/permission problems are OSErrors too, but they indicate a setup or
+    # filesystem issue — not a network one — so classify them before the
+    # network branch (otherwise the model is told to retry the connection).
+    if isinstance(e, (FileNotFoundError, PermissionError, IsADirectoryError)):
+        return "INTERNAL", f"File access error: {type(e).__name__}"
     if isinstance(e, (ConnectionError, TimeoutError, OSError)):
         return "NETWORK_ERROR", f"Connection failed: {type(e).__name__}"
     return "INTERNAL", f"Internal error: {type(e).__name__}"
