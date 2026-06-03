@@ -86,30 +86,38 @@ class AnomalyDetector:
     # ------------------------------------------------------------------
 
     def _check_hrv_crash(self, end_date: date) -> list[dict]:
-        """Flag a warning when HRV drops significantly below baseline.
+        """Flag a warning when the HRV trend drops meaningfully below baseline.
 
-        Triggers when the delta from the 7-day baseline exceeds -15 % or
-        when HRV has been below baseline for 3+ consecutive days.
+        Uses the smoothed 7-day-rolling-mean delta vs the longer baseline, with a
+        PERSONALIZED trigger: a drop beyond ~1x the athlete's own CV (= 2x the
+        smallest worthwhile change) is a clear, sustained suppression. Falls back
+        to a fixed -15% when there isn't enough data to estimate CV. Also flags
+        3+ consecutive nights below the 7-day mean.
         """
         ctx = self.agg.get_hrv_context(end_date)
 
         delta = ctx.get("delta_from_baseline")
         days_below = ctx.get("days_below_baseline", 0)
+        cv = ctx.get("cv_pct")
+        # Personalized threshold (1x CV below baseline) or fixed -15% fallback.
+        threshold = -cv if cv is not None and cv > 0 else -15.0
 
-        if delta is not None and delta < -15:
+        if delta is not None and delta < threshold:
             return [
                 {
                     "check": "hrv_crash",
                     "severity": "warning",
                     "message": (
-                        f"HRV dropped {abs(delta):.0f}% below your 7-day baseline "
-                        f"(baseline {ctx.get('baseline_7d')}, last night {ctx.get('last_night')})"
+                        f"HRV trend is down: 7-day mean is {abs(delta):.0f}% below your "
+                        f"baseline (beyond your normal day-to-day variability)"
                     ),
                     "data": {
                         "delta_from_baseline": delta,
+                        "trigger_threshold_pct": round(threshold, 1),
+                        "cv_pct": cv,
                         "days_below_baseline": days_below,
                         "baseline_7d": ctx.get("baseline_7d"),
-                        "last_night": ctx.get("last_night"),
+                        "baseline_28d": ctx.get("baseline_28d"),
                     },
                 }
             ]

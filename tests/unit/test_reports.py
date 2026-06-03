@@ -546,13 +546,17 @@ class TestHRVContext:
         assert ctx["last_night"] == 70  # Day 10
 
     def test_hrv_delta_from_baseline(self, db_with_hrv_data):
-        """Delta from baseline is calculated as percentage."""
+        """Delta is the SMOOTHED 7-day rolling mean vs the longer baseline
+        (not a single night vs the week)."""
         aggregator = DataAggregator(db_with_hrv_data)
         ctx = aggregator.get_hrv_context(date(2024, 1, 10))
 
-        # last_night=70, baseline_7d=67 -> delta = (70-67)/67*100 = 4.5%
+        # baseline_7d=67, baseline_28d=65.5 -> delta = (67-65.5)/65.5*100 = 2.3%
         assert ctx["delta_from_baseline"] is not None
-        assert abs(ctx["delta_from_baseline"] - 4.5) < 0.5
+        assert abs(ctx["delta_from_baseline"] - 2.3) < 0.3
+        # Personalized variability is computed from >=7 days of data.
+        assert ctx["cv_pct"] is not None
+        assert ctx["swc_pct"] is not None
 
     def test_hrv_days_below_baseline(self, db_with_hrv_data):
         """Consecutive days below baseline are counted."""

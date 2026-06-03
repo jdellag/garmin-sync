@@ -134,6 +134,33 @@ class TestHrvCrash:
         assert len(results) == 1
         assert results[0]["data"]["days_below_baseline"] == 4
 
+    def test_personalized_threshold_fires_beyond_cv(self, detector, mock_agg):
+        """A drop beyond ~1x the person's own CV fires, even though it's well
+        short of the old fixed -15% threshold."""
+        mock_agg.get_hrv_context.return_value = {
+            "delta_from_baseline": -6.0,   # smoothed 7d-mean delta
+            "cv_pct": 5.0,                 # threshold = -5% (one CV)
+            "days_below_baseline": 1,
+            "baseline_7d": 48,
+            "baseline_28d": 51,
+        }
+        results = detector._check_hrv_crash(date(2026, 5, 23))
+        assert len(results) == 1
+        assert results[0]["data"]["trigger_threshold_pct"] == -5.0
+
+    def test_personalized_threshold_ignores_within_cv(self, detector, mock_agg):
+        """A drop within the person's normal variability does NOT fire (a -4%
+        dip that the old fixed -15% rule also ignored, but here it's judged
+        against the personal CV)."""
+        mock_agg.get_hrv_context.return_value = {
+            "delta_from_baseline": -4.0,
+            "cv_pct": 5.0,                 # threshold = -5%; -4 is within noise
+            "days_below_baseline": 0,
+            "baseline_7d": 49,
+            "baseline_28d": 51,
+        }
+        assert detector._check_hrv_crash(date(2026, 5, 23)) == []
+
 
 class TestRhrSpike:
     def test_triggers_on_high_delta(self, detector, mock_agg):

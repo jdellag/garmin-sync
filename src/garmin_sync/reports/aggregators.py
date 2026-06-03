@@ -1,6 +1,7 @@
 """Data aggregation functions for reports."""
 
 import calendar
+import statistics
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -391,6 +392,9 @@ class DataAggregator:
             "baseline_28d": None,
             "last_night": None,
             "delta_from_baseline": None,
+            "cv_pct": None,
+            "swc_pct": None,
+            "meaningful_change": None,
             "days_below_baseline": 0,
             "status": None,
             "daily_values": [],
@@ -412,7 +416,10 @@ class DataAggregator:
         if not rows:
             return result
 
-        # Calculate baselines
+        # Baselines: baseline_7d is the smoothed 7-day rolling mean (the current
+        # signal); baseline_28d is the longer reference. Plews & Buchheit judge
+        # HRV by the rolling weekly mean vs a longer baseline, NOT a single noisy
+        # night.
         values_28d = [row["hrv_value"] for row in rows if row["hrv_value"]]
         values_7d = [row["hrv_value"] for row in rows[:7] if row["hrv_value"]]
 
@@ -421,17 +428,31 @@ class DataAggregator:
         if values_7d:
             result["baseline_7d"] = round(sum(values_7d) / len(values_7d), 1)
 
-        # Most recent values
+        # Most recent values (kept for display/context, not for scoring)
         most_recent = rows[0]
         result["last_night"] = most_recent["last_night_avg"] or most_recent["hrv_value"]
         result["status"] = most_recent["hrv_status"]
 
-        # Calculate delta from baseline
-        if result["baseline_7d"] and result["last_night"]:
-            delta = ((result["last_night"] - result["baseline_7d"]) / result["baseline_7d"]) * 100
-            result["delta_from_baseline"] = round(delta, 1)
+        # Personalized variability: coefficient of variation of daily HRV and
+        # the smallest worthwhile change (~0.5 x CV; Hopkins/Plews). Lets us ask
+        # "is this change meaningful for THIS person?" instead of using a fixed
+        # percentage. Needs enough days to be stable.
+        if len(values_28d) >= 7 and result["baseline_28d"]:
+            sd = statistics.stdev(values_28d)
+            cv = (sd / result["baseline_28d"]) * 100
+            result["cv_pct"] = round(cv, 1)
+            result["swc_pct"] = round(cv * 0.5, 1)
 
-        # Count consecutive days below baseline
+        # Delta = smoothed 7-day rolling mean vs the longer baseline (replaces
+        # the old single-night-vs-7d-mean, which was too noisy to act on).
+        if result["baseline_7d"] and result["baseline_28d"]:
+            delta = ((result["baseline_7d"] - result["baseline_28d"]) / result["baseline_28d"]) * 100
+            result["delta_from_baseline"] = round(delta, 1)
+            if result["swc_pct"] is not None:
+                result["meaningful_change"] = abs(delta) > result["swc_pct"]
+
+        # Count consecutive days the raw nightly value sat below the 7-day mean
+        # (a simple persistence signal, kept for the anomaly check).
         if result["baseline_7d"]:
             days_below = 0
             for row in rows:

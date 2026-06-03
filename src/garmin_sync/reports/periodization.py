@@ -445,7 +445,14 @@ class PeriodizationAnalyzer:
     # --- Component scorers for readiness ---
 
     def _score_hrv(self, end_date: date, components: dict) -> None:
-        """Score HRV component (max from components dict)."""
+        """Score HRV component (max from components dict).
+
+        Uses the smoothed 7-day-rolling-mean delta vs the longer baseline, and
+        anchors the scoring ramp to the athlete's own variability: a drop within
+        the smallest worthwhile change (~0.5x CV) is normal noise (full points),
+        scaling to zero by ~2x CV below baseline. Falls back to a fixed -20%
+        ramp when there isn't enough data to estimate CV (Plews & Buchheit).
+        """
         hrv = self.agg.get_hrv_context(end_date)
         delta = hrv.get("delta_from_baseline")
         if delta is None:
@@ -453,16 +460,29 @@ class PeriodizationAnalyzer:
 
         max_pts = components["hrv"]["max"]
         components["hrv"]["value"] = delta
-        # 0% delta -> max pts, -20% delta -> 0 pts, >=+10% -> max pts
-        if delta >= 0:
-            score = max_pts
-        else:
-            # Linear from 0 at -20% to max_pts at 0%
-            score = max(0, max_pts + (delta * max_pts / 20))
+        swc = hrv.get("swc_pct")
+        cv = hrv.get("cv_pct")
 
-        score = int(min(max_pts, max(0, score)))
-        components["hrv"]["score"] = score
-        components["hrv"]["detail"] = f"HRV delta {delta:+.1f}% from 7d baseline"
+        if swc is not None and cv is not None and cv > 0:
+            # Personalized: full above -SWC, zero at/below -(2*CV), linear between.
+            hi, lo = -swc, -(2 * cv)
+            if delta >= hi:
+                score = max_pts
+            elif delta <= lo:
+                score = 0
+            else:
+                score = max_pts * (delta - lo) / (hi - lo)
+            detail = (
+                f"HRV 7d mean {delta:+.1f}% vs baseline "
+                f"(personal SWC ±{swc:.1f}%, CV {cv:.1f}%)"
+            )
+        else:
+            # Fallback: full at >=0, linear to 0 at -20%.
+            score = max_pts if delta >= 0 else max(0, max_pts + (delta * max_pts / 20))
+            detail = f"HRV 7d mean {delta:+.1f}% vs baseline"
+
+        components["hrv"]["score"] = int(min(max_pts, max(0, score)))
+        components["hrv"]["detail"] = detail
 
     def _score_sleep(self, end_date: date, components: dict) -> None:
         """Score sleep component (max 20 pts)."""

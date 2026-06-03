@@ -22,8 +22,12 @@ parameter is tagged: ✅ **established** · 🟡 **reasonable simplification** �
 - **Area 1 (sRPE):** documented as **modified sRPE** (volume-weighted per-set RPE, not Foster's
   single-session) and the estimation heuristic as an unvalidated proxy. `strength_load.py`.
 - **Area 6:** documented HR-drift <5% interpretation and the deload 120%/3-week rule as a heuristic.
-- **Area 3 (HRV):** **deferred** — single-day delta → 7-day rolling ln-rMSSD vs personal CV is its
-  own task (touches `get_hrv_context`, `_score_hrv`, the HRV anomaly).
+- **Area 3 (HRV):** ✅ **done (pass b)** — `get_hrv_context` now derives `delta_from_baseline`
+  from the **smoothed 7-day rolling mean vs the longer baseline** (not a single night), and
+  computes the athlete's **CV** + **smallest-worthwhile-change** (~0.5×CV). `_score_hrv` anchors
+  its ramp to ±SWC→2×CV, and `_check_hrv_crash` fires beyond ~1×CV — both with a fixed-% fallback
+  when there's too little data (Plews & Buchheit). `aggregators.py`, `periodization.py`,
+  `anomaly_detector.py`.
 - **Area 4:** thresholds left as-is (reasonable heuristics); Foster monotony/strain not implemented.
 
 ---
