@@ -97,7 +97,7 @@ def generate_plist(
             {"Weekday": 0, "Hour": weekend_hour, "Minute": weekend_minute},
         ],
         # Backup interval: check every 2 hours in case scheduled run was missed
-        # (e.g., Mac was asleep at 7 AM). The idempotency check prevents duplicates.
+        # (e.g., Mac was asleep at 8:30 AM). The idempotency check prevents duplicates.
         "StartInterval": 7200,  # 2 hours in seconds
         "StandardOutPath": str(log_dir / "sync.log"),
         "StandardErrorPath": str(log_dir / "sync-error.log"),

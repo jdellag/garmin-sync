@@ -304,7 +304,7 @@ class TestScheduleCLI:
 
         assert result.exit_code == 0
         assert "Installed successfully" in result.output
-        assert "7:00 AM" in result.output
+        assert "8:30 AM" in result.output
         assert "10:00 AM" in result.output
 
     @patch("garmin_sync.scheduler.get_scheduler")

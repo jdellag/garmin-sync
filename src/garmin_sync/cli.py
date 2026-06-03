@@ -814,7 +814,7 @@ def schedule_install_cmd():
     if scheduler is None:
         console.print("[red]Automatic scheduling is not supported on this OS[/red]")
         console.print("For Linux, add to crontab manually:")
-        console.print("  0 7 * * 1-5 garmin-sync sync all --days 1 --detailed")
+        console.print("  30 8 * * 1-5 garmin-sync sync all --days 1 --detailed")
         console.print("  0 10 * * 0,6 garmin-sync sync all --days 1 --detailed")
         raise typer.Exit(1)
 
@@ -832,7 +832,7 @@ def schedule_install_cmd():
         console.print(f"[green]{message}[/green]")
         console.print()
         console.print("Schedule:")
-        console.print("  Weekdays (Mon-Fri): 7:00 AM")
+        console.print("  Weekdays (Mon-Fri): 8:30 AM")
         console.print("  Weekends (Sat-Sun): 10:00 AM")
         console.print()
         console.print(f"Logs: {settings.logs_dir}")
