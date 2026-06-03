@@ -161,7 +161,8 @@ class TestTrainingOverload:
         results = detector._check_training_overload(date(2026, 5, 23))
         assert len(results) == 1
         assert results[0]["check"] == "training_overload"
-        assert results[0]["severity"] == "critical"
+        # Reframed as a descriptive load-ramp signal, not an injury "critical".
+        assert results[0]["severity"] == "warning"
         assert results[0]["data"]["acute_chronic_ratio"] == 1.8
 
 
@@ -274,12 +275,9 @@ class TestSeveritySorting:
         _set_all_healthy(mock_agg)
 
         # Trigger one of each severity level:
-        # critical — training_overload (ratio > 1.5)
-        mock_agg.get_training_load_trend.return_value = {
-            "acute_chronic_ratio": 1.9,
-            "acute_load_7d": 570,
-            "chronic_load_28d": 300,
-        }
+        # critical — low SpO2 (<92). (Training overload is now a *warning*, not
+        # a critical, since the A:C ratio is a descriptive ramp signal.)
+        mock_agg.get_allday_respiration_spo2.return_value = {"avg_spo2": 88, "min_spo2": 84}
         # warning — rhr_spike (delta > 5)
         mock_agg.get_resting_hr_trend.return_value = {
             "delta": 7,
@@ -287,26 +285,13 @@ class TestSeveritySorting:
             "current": 59,
             "trend": "rising",
         }
-        # info — detraining (ratio < 0.8) -- but wait, we already set ratio
-        # to 1.9 above, so detraining won't fire from that same call. Instead,
-        # trigger a different info: note that overload and detraining share the
-        # same aggregator call.  We need the ratio to be >1.5 for overload.
-        # So we can't also get detraining from the same data.  Instead, add
-        # the hrv crash as a second warning and trigger spo2 as another critical.
-        # For a clean 3-level test we need a separate info source.
-        # Let's use a custom approach: patch the check methods directly.
-
-        # Simpler approach: build anomalies manually and verify sort order.
-        # Actually, the training_load_trend return produces BOTH overload and
-        # detraining checks.  Since ratio=1.9 is > 1.5, overload fires (critical)
-        # and detraining does NOT (1.9 > 0.8).
-
-        # For detraining (info) we need ratio < 0.8.  Since both checks call
-        # the same aggregator, we can't get both from one run.  Trick: make
-        # training_load_trend return different values on successive calls.
+        # warning — training overload (ratio > 1.5) on the first load call;
+        # info — detraining (ratio < 0.8) on the second call. The overload and
+        # detraining checks each call get_training_load_trend once, so we feed
+        # different values via side_effect.
         load_results = iter([
             {"acute_chronic_ratio": 1.9, "acute_load_7d": 570, "chronic_load_28d": 300,
-             "chronic_baseline_load": 240},
+             "chronic_baseline_load": 240, "chronic_baseline_weekly": 100},
             {"acute_chronic_ratio": 0.5, "acute_load_7d": 100, "chronic_load_28d": 200},
         ])
         mock_agg.get_training_load_trend.side_effect = lambda *a, **kw: next(load_results)

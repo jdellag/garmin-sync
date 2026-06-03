@@ -228,7 +228,7 @@ class TestSaveConfig:
             "[strength]\nchest = true\nbiceps = -5\nlats = 0\nquadriceps = 16\n"
         )
         cfg = load_config(config_path, profile_path)
-        assert cfg.strength.get_target("chest") == 10        # bool ignored, default kept
+        assert cfg.strength.get_target("chest") == 14        # bool ignored, default kept
         assert cfg.strength.get_target("quadriceps") == 16   # valid override applied
 
     def test_roundtrip(self, config_path, profile_path):
@@ -341,8 +341,8 @@ class TestStrengthTargets:
 
         cfg = load_config(config_path, profile_path)
 
-        assert cfg.strength.weekly_set_targets["quadriceps"] == 10
-        assert cfg.strength.weekly_set_targets["biceps"] == 6
+        assert cfg.strength.weekly_set_targets["quadriceps"] == 12
+        assert cfg.strength.weekly_set_targets["biceps"] == 12
         # Fallback for an unknown group
         assert cfg.strength.get_target("unknown_group") == 6
 
@@ -357,7 +357,7 @@ class TestStrengthTargets:
         cfg = load_config(config_path, profile_path)
 
         # Overridden values
-        assert cfg.strength.weekly_set_targets["quadriceps"] == 16
-        assert cfg.strength.weekly_set_targets["upper_back"] == 14
+        assert cfg.strength.weekly_set_targets["quadriceps"] == 16  # user override
+        assert cfg.strength.weekly_set_targets["upper_back"] == 14  # user override
         # Default preserved
-        assert cfg.strength.weekly_set_targets["chest"] == 10
+        assert cfg.strength.weekly_set_targets["chest"] == 14

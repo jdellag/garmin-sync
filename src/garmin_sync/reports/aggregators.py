@@ -633,6 +633,7 @@ class DataAggregator:
             "acute_load_7d": None,
             "chronic_load_28d": None,
             "chronic_baseline_load": None,
+            "chronic_baseline_weekly": None,
             "acute_chronic_ratio": None,
             "cardio_load_7d": None,
             "strength_load_7d": None,
@@ -751,18 +752,27 @@ class DataAggregator:
             # Calculate as weekly average (total / 4 weeks)
             result["chronic_load_28d"] = round(total_28d / 4, 1)
 
-        # Chronic baseline = load accrued BEFORE the acute 7d window (days 8-28).
-        # When this is zero, all training sits in the last week, so the A:C
-        # ratio is structurally ~4 and meaningless — consumers use this to
-        # suppress overload alarms for users without an established baseline.
+        # Chronic baseline = load accrued BEFORE the acute 7d window (days 8-28
+        # = the prior 3 weeks).  This is the UNCOUPLED chronic denominator: the
+        # acute window is deliberately excluded so the A:C ratio is not
+        # mathematically coupled (the classic ACWR flaw — the acute load sitting
+        # inside the chronic denominator produces a spurious correlation; Lolli
+        # et al. 2019, PMID 29101104).  When it's zero, all training sits in the
+        # last week (no established baseline) and the ratio is left undefined.
         baseline_loads = [r["training_load"] for r in rows
                           if r["activity_date"] < start_7d.isoformat() and r["training_load"]]
-        result["chronic_baseline_load"] = round(sum(baseline_loads), 1) if baseline_loads else 0
+        chronic_baseline = round(sum(baseline_loads), 1) if baseline_loads else 0
+        result["chronic_baseline_load"] = chronic_baseline
+        # Weekly average over the prior 3 weeks (uncoupled chronic).
+        result["chronic_baseline_weekly"] = round(chronic_baseline / 3, 1) if chronic_baseline else 0
 
-        # Calculate A:C ratio
-        if result["acute_load_7d"] and result["chronic_load_28d"] and result["chronic_load_28d"] > 0:
+        # A:C ratio = acute (7d) vs the uncoupled prior-3-week weekly average.
+        # NOTE: this is a DESCRIPTIVE load-ramp indicator, not a validated injury
+        # predictor — the ACWR's injury-risk "sweet spot" is not supported by
+        # evidence (Impellizzeri et al. 2020, PMID 32502973).
+        if result["acute_load_7d"] and result["chronic_baseline_weekly"]:
             result["acute_chronic_ratio"] = round(
-                result["acute_load_7d"] / result["chronic_load_28d"], 2
+                result["acute_load_7d"] / result["chronic_baseline_weekly"], 2
             )
 
         # Week-over-week comparison

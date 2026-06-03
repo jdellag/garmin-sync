@@ -310,9 +310,13 @@ def _compute_splits(
 
 
 def _compute_hr_drift(hr_samples: list[int]) -> float | None:
-    """Compute HR drift from a list of HR values.
+    """Compute HR drift (aerobic decoupling) from a list of HR values.
 
     HR Drift = (avg_hr_second_half - avg_hr_first_half) / avg_hr_first_half
+
+    Interpretation (TrainingPeaks/Friel decoupling convention): <5% = strong
+    aerobic durability at that intensity, 5-10% = moderate, >10% = effort was
+    above aerobic threshold or aerobic base is lacking.
     """
     if len(hr_samples) < 10:
         return None

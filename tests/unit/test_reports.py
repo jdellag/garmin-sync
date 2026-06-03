@@ -725,14 +725,17 @@ class TestTrainingLoadTrend:
         # Total: 80+100+60+90+85 = 415, divided by 4 weeks = 103.75
         assert abs(result["chronic_load_28d"] - 103.75) < 1
 
-    def test_acute_chronic_ratio(self, db_with_training_data):
-        """A:C ratio is calculated correctly."""
+    def test_acute_chronic_ratio_uncoupled(self, db_with_training_data):
+        """A:C ratio uses the UNCOUPLED chronic (prior 3 weeks, excluding the
+        acute window) to avoid mathematical coupling."""
         aggregator = DataAggregator(db_with_training_data)
         result = aggregator.get_training_load_trend(date(2024, 1, 14))
 
         assert result["acute_chronic_ratio"] is not None
-        # 240 / 103.75 = ~2.31
-        assert 2.0 < result["acute_chronic_ratio"] < 2.5
+        # acute (last 7d) = 240. chronic baseline (days 8-28, i.e. the 90+85
+        # from the prior week) = 175; weekly avg = 175/3 = 58.3. 240/58.3 ~= 4.12.
+        assert result["chronic_baseline_weekly"] is not None
+        assert 4.0 < result["acute_chronic_ratio"] < 4.3
 
     def test_week_over_week_change(self, db_with_training_data):
         """Week-over-week change percentage is calculated."""

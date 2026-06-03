@@ -43,26 +43,31 @@ Saturday: Long run
 Sunday: Easy run or rest"""
 
 
-# Science-backed weekly set targets per muscle group (moderate general fitness).
-# Sources: Schoenfeld (2017), Renaissance Periodization volume landmarks.
-# Users can override any group in profile.toml [strength] section.
+# Weekly working-set targets per muscle group, tuned for HYPERTROPHY.
+# Values sit in the MEV->low-MAV band (the "should grow for most people" zone):
+# Schoenfeld et al. 2017 found >10 sets/week beats <10 for muscle growth, and
+# Renaissance Periodization volume landmarks put MEV ~10-16 and MAV ~16-20
+# sets/muscle/week. Major muscles are set ~12-14, smaller/assistance ~8-12, and
+# muscles that get heavy indirect work (lower_back) stay lower. These are
+# DEFAULTS — users can override any group in profile.toml [strength].
+# Sources: Schoenfeld 2017 (PMID 27433992-era dose-response); RP MEV/MAV/MRV.
 DEFAULT_WEEKLY_SET_TARGETS: dict[str, int] = {
-    "quadriceps": 10,
-    "hamstrings": 8,
-    "glutes": 10,
-    "chest": 10,
-    "lats": 10,
-    "shoulders": 10,
-    "upper_back": 8,
-    "biceps": 6,
-    "triceps": 6,
-    "traps": 6,
-    "calves": 6,
-    "abdominals": 8,
-    "forearms": 4,
-    "adductors": 4,
-    "abductors": 4,
-    "lower_back": 4,
+    "quadriceps": 12,
+    "hamstrings": 10,
+    "glutes": 12,
+    "chest": 14,
+    "lats": 14,
+    "shoulders": 14,
+    "upper_back": 12,
+    "biceps": 12,
+    "triceps": 12,
+    "traps": 10,
+    "calves": 12,
+    "abdominals": 10,
+    "forearms": 8,
+    "adductors": 8,
+    "abductors": 8,
+    "lower_back": 6,
 }
 
 # Fallback for any muscle group not in the defaults

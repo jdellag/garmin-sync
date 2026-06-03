@@ -223,6 +223,10 @@ class PeriodizationAnalyzer:
         exceed 120 % of the 6-week average load **and** recovery markers
         show decline (HRV, RHR, or body battery).
 
+        NOTE: these specific cutoffs (3 weeks, 120 %) are a practical heuristic
+        consistent with accumulated-fatigue/overreaching monitoring, not a
+        single validated threshold — treat the recommendation as a nudge.
+
         Args:
             end_date: Analysis end date.  Defaults to today.
 

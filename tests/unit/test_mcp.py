@@ -196,7 +196,7 @@ class TestMCPServer:
         assert result["acute_load_7d"] == 200
         assert result["chronic_load_28d"] == 220
         assert result["acute_chronic_ratio"] == 0.91
-        assert result["risk_assessment"] == "optimal"
+        assert result["load_ramp"] == "steady"
         assert "by_activity_type" in result
         assert "running" in result["by_activity_type"]
 
@@ -215,7 +215,7 @@ class TestMCPServer:
         with patch.object(server, "_get_executor", return_value=executor):
             result = server.get_training_load_analysis()
 
-        assert result["risk_assessment"] == "high_risk"
+        assert result["load_ramp"] == "rapid_increase"
 
     def test_get_training_load_detraining(self, mock_repo, mock_aggregator):
         """Test training load detects detraining."""
@@ -232,7 +232,7 @@ class TestMCPServer:
         with patch.object(server, "_get_executor", return_value=executor):
             result = server.get_training_load_analysis()
 
-        assert result["risk_assessment"] == "detraining"
+        assert result["load_ramp"] == "reduced"
 
     def test_get_training_load_building(self, mock_repo, mock_aggregator):
         """Test training load building phase."""
@@ -249,7 +249,7 @@ class TestMCPServer:
         with patch.object(server, "_get_executor", return_value=executor):
             result = server.get_training_load_analysis()
 
-        assert result["risk_assessment"] == "building"
+        assert result["load_ramp"] == "building"
 
     def test_get_training_load_insufficient_data(self, mock_repo, mock_aggregator):
         """Test training load with no data."""
@@ -266,7 +266,7 @@ class TestMCPServer:
         with patch.object(server, "_get_executor", return_value=executor):
             result = server.get_training_load_analysis()
 
-        assert result["risk_assessment"] == "insufficient_data"
+        assert result["load_ramp"] == "insufficient_history"
 
     def test_get_strength_training_summary_no_workouts(self, mock_repo, mock_aggregator, executor):
         """Test strength summary with no workouts."""
@@ -419,7 +419,7 @@ class TestMCPServerEdgeCases:
         executor = ToolExecutor(mock_repo, mock_agg)
         with patch.object(server, "_get_executor", return_value=executor):
             result = server.get_training_load_analysis()
-        assert result["risk_assessment"] == "optimal"
+        assert result["load_ramp"] == "steady"
 
         # Test exactly 1.3 (should be optimal)
         mock_agg.get_training_load_trend.return_value = {
@@ -429,7 +429,7 @@ class TestMCPServerEdgeCases:
         executor = ToolExecutor(mock_repo, mock_agg)
         with patch.object(server, "_get_executor", return_value=executor):
             result = server.get_training_load_analysis()
-        assert result["risk_assessment"] == "optimal"
+        assert result["load_ramp"] == "steady"
 
         # Test exactly 1.5 (should be building)
         mock_agg.get_training_load_trend.return_value = {
@@ -439,7 +439,7 @@ class TestMCPServerEdgeCases:
         executor = ToolExecutor(mock_repo, mock_agg)
         with patch.object(server, "_get_executor", return_value=executor):
             result = server.get_training_load_analysis()
-        assert result["risk_assessment"] == "building"
+        assert result["load_ramp"] == "building"
 
 
 class TestMCPServerIntegration:

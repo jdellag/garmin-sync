@@ -516,16 +516,18 @@ class LLMReportFormatter:
 
         ratio = load.get("acute_chronic_ratio")
         if ratio is not None:
-            # Assess risk level
+            # Descriptive load-ramp label (acute 7d vs uncoupled prior-3-week
+            # weekly avg). NOT an injury-risk zone — the ACWR "sweet spot" is
+            # not evidence-supported (Impellizzeri 2020).
             if 0.8 <= ratio <= 1.3:
-                risk = "Normal (0.8-1.3)"
+                ramp = "steady"
             elif ratio < 0.8:
-                risk = "Low Load"
+                ramp = "reduced load"
             elif ratio <= 1.5:
-                risk = "Elevated"
+                ramp = "building"
             else:
-                risk = "High Risk (>1.5)"
-            lines.append(f"| Acute:Chronic Ratio | {ratio:.2f} ({risk}) |")
+                ramp = "rapid increase — monitor recovery"
+            lines.append(f"| Acute:Chronic Ratio | {ratio:.2f} ({ramp}) |")
 
         # Cardio vs strength breakdown — surfaces the HEVY strength
         # contribution.  Combined load is approximate (Garmin EPOC + sRPE);

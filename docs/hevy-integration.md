@@ -40,7 +40,7 @@ Shows total volume (lbs), set count, and session count per muscle group.
 
 ## Weekly set targets
 
-The AI coach compares your actual training volume against science-backed weekly set targets per muscle group. Defaults are based on Renaissance Periodization and Schoenfeld (2017) guidelines for moderate general fitness.
+The AI coach compares your actual training volume against science-backed weekly set targets per muscle group. Defaults are tuned for **hypertrophy** (MEV→low-MAV band per Renaissance Periodization and Schoenfeld et al. 2017 — most major muscles ~12–14 sets/week). Lower them in `profile.toml` if your goal is general fitness/maintenance.
 
 In tool output and AI prompts, muscle groups show as actual/target:
 

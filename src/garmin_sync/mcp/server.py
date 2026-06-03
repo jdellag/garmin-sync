@@ -142,12 +142,15 @@ def get_recovery_status() -> dict:
 @mcp.tool()
 @mcp_error_handler
 def get_training_load_analysis() -> dict:
-    """Analyze training load for injury prevention.
+    """Analyze the training-load trend (acute vs. chronic load ramp).
 
-    Returns acute (7d) and chronic (28d) load, acute:chronic ratio,
-    week-over-week change, breakdown by activity type, and risk assessment.
+    Returns acute (7d) load, the uncoupled chronic (prior-3-week weekly avg),
+    the acute:chronic ratio, week-over-week change, breakdown by activity type,
+    and a descriptive `load_ramp` label.
 
-    A:C ratio thresholds: <0.8 detraining, 0.8-1.3 optimal, >1.5 high risk.
+    NOTE: the A:C ratio is a descriptive load-ramp signal, not a validated
+    injury predictor (Impellizzeri 2020). Labels: <0.8 reduced, 0.8-1.3 steady,
+    1.3-1.5 building, >1.5 rapid increase.
     """
     return _get_executor().get_training_load_analysis()
 

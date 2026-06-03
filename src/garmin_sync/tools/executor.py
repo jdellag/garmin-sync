@@ -208,27 +208,32 @@ class ToolExecutor:
         return result
 
     def get_training_load_analysis(self) -> dict:
-        """Analyze training load for injury prevention.
+        """Analyze the training-load trend (acute vs. chronic load ramp).
 
         Returns:
-            Dict with acute (7d) and chronic (28d) load, acute:chronic ratio,
-            week-over-week change, breakdown by activity type, and risk assessment.
+            Dict with acute (7d) and chronic (prior-3-week weekly avg) load, the
+            acute:chronic ratio, week-over-week change, breakdown by activity
+            type, and a descriptive ramp label.
 
-            A:C ratio thresholds: <0.8 detraining, 0.8-1.3 optimal, >1.5 high risk.
+            NOTE: the A:C ratio is a *descriptive load-ramp* indicator, not a
+            validated injury predictor — the ACWR injury "sweet spot" is not
+            supported by evidence (Impellizzeri et al. 2020). The ratio is
+            uncoupled (chronic excludes the acute window). `load_ramp` labels:
+            <0.8 reduced, 0.8-1.3 steady, 1.3-1.5 building, >1.5 rapid increase.
         """
         load = self.agg.get_training_load_trend(date.today())
 
         ac = load.get("acute_chronic_ratio")
         if ac is None:
-            risk = "insufficient_data"
+            load_ramp = "insufficient_history"
         elif ac < 0.8:
-            risk = "detraining"
+            load_ramp = "reduced"
         elif ac <= 1.3:
-            risk = "optimal"
+            load_ramp = "steady"
         elif ac <= 1.5:
-            risk = "building"
+            load_ramp = "building"
         else:
-            risk = "high_risk"
+            load_ramp = "rapid_increase"
 
         # Determine STL confidence from recent workouts
         stl_confidence = None
@@ -239,6 +244,7 @@ class ToolExecutor:
         return {
             "acute_load_7d": load.get("acute_load_7d"),
             "chronic_load_28d": load.get("chronic_load_28d"),
+            "chronic_baseline_weekly": load.get("chronic_baseline_weekly"),
             "acute_chronic_ratio": ac,
             "cardio_load_7d": load.get("cardio_load_7d"),
             "strength_load_7d": load.get("strength_load_7d"),
@@ -246,7 +252,7 @@ class ToolExecutor:
             "stl_confidence": stl_confidence,
             "week_change_pct": load.get("week_change_pct"),
             "by_activity_type": load.get("by_type", {}),
-            "risk_assessment": risk,
+            "load_ramp": load_ramp,
             "avg_training_effect_aerobic": load.get("avg_training_effect_aerobic"),
             "avg_training_effect_anaerobic": load.get("avg_training_effect_anaerobic"),
             "training_effect_balance": load.get("training_effect_balance"),

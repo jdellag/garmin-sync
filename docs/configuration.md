@@ -50,18 +50,21 @@ Training for a spring marathon.
 
 ### Weekly set target defaults
 
-The default targets apply when no `[strength]` override is set:
+The defaults are tuned for **hypertrophy** — they sit in the MEV→low-MAV band
+(Schoenfeld et al. 2017 found >10 sets/week beats <10 for growth; Renaissance
+Periodization puts MEV ~10–16 and MAV ~16–20 sets/muscle/week). If your goal is
+general fitness/maintenance rather than growth, set lower values in `[strength]`.
 
 | Muscle Group | Sets/Week | Muscle Group | Sets/Week |
 |-------------|-----------|-------------|-----------|
-| Quadriceps | 10 | Biceps | 6 |
-| Hamstrings | 8 | Triceps | 6 |
-| Glutes | 10 | Traps | 6 |
-| Chest | 10 | Calves | 6 |
-| Lats | 10 | Abdominals | 8 |
-| Shoulders | 10 | Forearms | 4 |
-| Upper Back | 8 | Adductors | 4 |
-| Lower Back | 4 | Abductors | 4 |
+| Quadriceps | 12 | Biceps | 12 |
+| Hamstrings | 10 | Triceps | 12 |
+| Glutes | 12 | Traps | 10 |
+| Chest | 14 | Calves | 12 |
+| Lats | 14 | Abdominals | 10 |
+| Shoulders | 14 | Forearms | 8 |
+| Upper Back | 12 | Adductors | 8 |
+| Lower Back | 6 | Abductors | 8 |
 
 Any muscle group not listed defaults to 6 sets/week. Targets flow into AI analysis and tool output as actual/target ratios.
 

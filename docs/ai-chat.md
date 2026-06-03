@@ -102,11 +102,17 @@ The following metrics are computed from your data and available through tools an
 | **Longitudinal** | Aerobic efficiency by period, yearly health baselines, volume trends, HR drift by year |
 | **Respiratory** | Sleep respiration rate, SpO2 averages, all-day respiration/SpO2 |
 
-### A:C ratio risk assessment
+### A:C ratio (load-ramp signal)
 
-| Ratio | Assessment |
-|-------|------------|
-| < 0.8 | Detraining |
-| 0.8 - 1.3 | Optimal |
+The acute:chronic ratio compares your last 7 days of load to the **prior 3-week
+weekly average** (uncoupled — the recent week is excluded from the baseline to
+avoid the well-known mathematical-coupling artifact). It is a **descriptive
+load-ramp signal, not an injury predictor** — the ACWR injury "sweet spot" is
+not supported by evidence ([Impellizzeri et al. 2020](https://pubmed.ncbi.nlm.nih.gov/32502973/)).
+
+| Ratio | Load ramp |
+|-------|-----------|
+| < 0.8 | Reduced (tapering / rest) |
+| 0.8 - 1.3 | Steady |
 | 1.3 - 1.5 | Building |
-| > 1.5 | High risk |
+| > 1.5 | Rapid increase — worth checking recovery |

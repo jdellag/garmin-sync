@@ -160,26 +160,30 @@ class AnomalyDetector:
         return []
 
     def _check_training_overload(self, end_date: date) -> list[dict]:
-        """Flag critical when acute:chronic training load ratio exceeds 1.5."""
+        """Flag a rapid load ramp (acute:chronic ratio > 1.5).
+
+        This is a descriptive ramp-rate signal, NOT an injury prediction: the
+        ACWR has no validated injury "danger zone" (Impellizzeri et al. 2020),
+        so it's surfaced as a warning to check recovery, not a critical alarm.
+        """
         load = self.agg.get_training_load_trend(end_date)
 
         ratio = load.get("acute_chronic_ratio")
-        # Suppress when there is no chronic baseline (all load sits in the last
-        # 7 days): the ratio is then structurally ~4 and not meaningful — e.g.
-        # a user who just started training or only synced one week of data.
+        # Requires an established (uncoupled) baseline; the aggregator leaves the
+        # ratio undefined when all load sits in the last 7 days.
         if ratio is not None and ratio > 1.5 and load.get("chronic_baseline_load"):
             return [
                 {
                     "check": "training_overload",
-                    "severity": "critical",
+                    "severity": "warning",
                     "message": (
-                        f"Acute:chronic training load ratio is {ratio:.2f} — "
-                        f"high injury risk zone (>1.5)"
+                        f"Training load ramped fast: last 7d is {ratio:.1f}x your "
+                        f"prior 3-week weekly average — monitor recovery if it stays high"
                     ),
                     "data": {
                         "acute_chronic_ratio": ratio,
                         "acute_load_7d": load.get("acute_load_7d"),
-                        "chronic_load_28d": load.get("chronic_load_28d"),
+                        "chronic_baseline_weekly": load.get("chronic_baseline_weekly"),
                     },
                 }
             ]
@@ -187,7 +191,7 @@ class AnomalyDetector:
         return []
 
     def _check_training_detraining(self, end_date: date) -> list[dict]:
-        """Flag info when acute:chronic ratio drops below 0.8 (detraining)."""
+        """Flag info when recent load drops well below the recent baseline (A:C < 0.8)."""
         load = self.agg.get_training_load_trend(end_date)
 
         ratio = load.get("acute_chronic_ratio")
@@ -197,8 +201,8 @@ class AnomalyDetector:
                     "check": "training_detraining",
                     "severity": "info",
                     "message": (
-                        f"Acute:chronic training load ratio is {ratio:.2f} — "
-                        f"below the 0.8 threshold, possible detraining"
+                        f"Training load is down: last 7d is {ratio:.1f}x your prior "
+                        f"3-week weekly average (intentional if tapering/resting)"
                     ),
                     "data": {
                         "acute_chronic_ratio": ratio,
@@ -416,35 +420,39 @@ class AnomalyDetector:
             r["training_load"] for r in rows
             if r["d"] >= start_7d and r["training_load"]
         )
-        all_loads = [r["training_load"] for r in rows if r["training_load"]]
-        chronic = sum(all_loads) / 4 if all_loads else 0
 
-        # Require a chronic baseline: load logged BEFORE the acute 7d window.
-        # If everything sits in the last 7 days the ratio is structurally ~4
-        # and meaningless (e.g. someone who just started lifting).
+        # Uncoupled chronic: weekly average of the prior 3 weeks (days 8-28),
+        # EXCLUDING the acute window so the ratio isn't mathematically coupled
+        # (Lolli et al. 2019). If there's no load before the acute window there
+        # is no baseline to compare against, so we don't flag.
         baseline = sum(
             r["training_load"] for r in rows
             if r["d"] < start_7d and r["training_load"]
         )
-        if chronic <= 0 or baseline <= 0:
+        if baseline <= 0:
             return []
+        chronic_weekly = baseline / 3
 
-        strength_ac = round(acute / chronic, 2)
+        strength_ac = round(acute / chronic_weekly, 2)
 
+        # Descriptive load-ramp signal, not an injury prediction (the ACWR
+        # injury "sweet spot" is unsupported — Impellizzeri 2020). Reported as
+        # an informational nudge to check recovery, not a critical alarm.
         if strength_ac > 1.5:
             return [
                 {
                     "check": "strength_overload",
-                    "severity": "warning",
+                    "severity": "info",
                     "message": (
-                        f"Strength training A:C ratio is {strength_ac:.2f} "
-                        f"(acute {acute:.0f} / chronic weekly avg {chronic:.0f}) "
-                        "— sudden volume spike increases injury risk"
+                        f"Strength load ramped fast: last 7d is {strength_ac:.1f}x "
+                        f"your prior 3-week weekly average "
+                        f"(acute {acute:.0f} / weekly avg {chronic_weekly:.0f}) "
+                        "— worth checking recovery if it stays elevated"
                     ),
                     "data": {
                         "strength_ac_ratio": strength_ac,
                         "acute_strength_7d": round(acute, 1),
-                        "chronic_strength_28d": round(chronic, 1),
+                        "chronic_strength_weekly": round(chronic_weekly, 1),
                     },
                 }
             ]

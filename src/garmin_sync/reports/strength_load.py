@@ -4,22 +4,31 @@ Computes per-workout training load from HEVY data using a hybrid
 sRPE / estimation approach, producing values in arbitrary units
 comparable to Garmin's EPOC-based ``activityTrainingLoad``.
 
-**Method (Foster et al., 2001):**
+**Method — *modified* sRPE (after Foster et al., 2001):**
 
     STL = session_RPE × duration_minutes × scale_factor
 
-When ≥50 % of working sets have user-logged RPE, a volume-weighted
-mean RPE is used (method ``"srpe"``).  Otherwise, session RPE is
-estimated from workout characteristics (method ``"estimated"``).
+sRPE itself is well validated for resistance training (Day et al. 2004,
+ICC 0.88 vs %1RM; McGuigan & Foster 2004, ICC 0.95), so the approach is sound.
+But note two deliberate deviations from the canonical method:
 
-**Scientific context:** Combining EPOC-derived cardio load with
-sRPE-derived strength load is approximate — the scales overlap
-by coincidence (50–400 AU) rather than by calibration.  The
-trade-off is accepted because Garmin's EPOC underestimates
-strength by 40–50 % (wrist-sensor limitation), and a coarse
-signal beats zero representation.  Downstream consumers should
-always show the cardio/strength breakdown alongside the headline
-total.
+1. **Volume-weighted per-set RPE, not a single whole-session rating.** Foster's
+   validated sRPE is ONE global "how hard was the session?" CR-10 rating
+   (~30 min post) × duration. We instead volume-weight the per-set RPEs HEVY
+   logs (Σ rpe·weight·reps / Σ weight·reps). This is a reasonable adaptation to
+   the available data, but it is *modified* sRPE — a single session rating and a
+   per-set mean diverge (Sweet et al. 2004).
+2. **Estimated session RPE when <50 % of sets are logged** (base 5.0 ± PR /
+   failure / volume / exercise-count adjustments). This estimation heuristic is
+   our own, NOT a validated instrument — it's a pragmatic proxy, not science.
+
+**Scientific context:** Combining EPOC-derived cardio load with sRPE-derived
+strength load (downstream, in the A:C ratio) is approximate — the scales
+overlap by coincidence (~50–400 AU) rather than by calibration. Accepted
+because Garmin's EPOC underestimates strength (wrist-sensor limitation) and a
+coarse signal beats zero representation. Consumers should always show the
+cardio/strength breakdown alongside the headline total, and treat the combined
+number as a monitoring signal, not a calibrated measurement.
 """
 
 from __future__ import annotations

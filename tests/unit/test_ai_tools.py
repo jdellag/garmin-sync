@@ -211,7 +211,7 @@ class TestToolExecutor:
         assert result["acute_load_7d"] == 200
         assert result["chronic_load_28d"] == 220
         assert result["acute_chronic_ratio"] == 0.91
-        assert result["risk_assessment"] == "optimal"
+        assert result["load_ramp"] == "steady"
 
     def test_get_strength_training_summary(self, executor, mock_repo):
         """Test get_strength_training_summary with data."""
@@ -879,17 +879,17 @@ class TestToolExecutorExecutionPaths:
     @pytest.mark.parametrize(
         "ratio,expected",
         [
-            (0.5, "detraining"),
-            (1.0, "optimal"),
+            (0.5, "reduced"),
+            (1.0, "steady"),
             (1.4, "building"),
-            (1.8, "high_risk"),
-            (None, "insufficient_data"),
+            (1.8, "rapid_increase"),
+            (None, "insufficient_history"),
         ],
     )
-    def test_get_training_load_risk_levels(
+    def test_get_training_load_ramp_levels(
         self, ratio, expected, mock_repo, mock_aggregator
     ):
-        """Test that A:C ratio maps to correct risk assessment."""
+        """Test that A:C ratio maps to the correct descriptive load-ramp label."""
         mock_aggregator.get_training_load_trend.return_value = {
             "acute_load_7d": 200 if ratio is not None else None,
             "chronic_load_28d": 220 if ratio is not None else None,
@@ -899,7 +899,7 @@ class TestToolExecutorExecutionPaths:
         }
         executor = ToolExecutor(mock_repo, mock_aggregator)
         result = executor.get_training_load_analysis()
-        assert result["risk_assessment"] == expected
+        assert result["load_ramp"] == expected
 
 
 class TestToolDescriptionQuality:
