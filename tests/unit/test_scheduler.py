@@ -45,12 +45,12 @@ class TestLaunchdModule:
         intervals = plist["StartCalendarInterval"]
         assert len(intervals) == 7  # 5 weekdays + 2 weekend days
 
-        # Check weekdays (Mon-Fri at 7:00)
+        # Check weekdays (Mon-Fri at 8:30)
         weekday_intervals = [i for i in intervals if i.get("Weekday") in [1, 2, 3, 4, 5]]
         assert len(weekday_intervals) == 5
         for interval in weekday_intervals:
-            assert interval["Hour"] == 7
-            assert interval["Minute"] == 0
+            assert interval["Hour"] == 8
+            assert interval["Minute"] == 30
 
         # Check weekends (Sat=6, Sun=0 at 10:00)
         weekend_intervals = [i for i in intervals if i.get("Weekday") in [0, 6]]
@@ -200,7 +200,7 @@ class TestLaunchdModule:
 
         assert status["installed"] is True
         assert status["loaded"] is True
-        assert status["schedule"]["weekday_time"] == "7:00 AM"
+        assert status["schedule"]["weekday_time"] == "8:30 AM"
         assert status["schedule"]["weekend_time"] == "10:00 AM"
 
 

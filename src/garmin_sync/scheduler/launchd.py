@@ -35,16 +35,20 @@ def get_plist_path() -> Path:
 def generate_plist(
     garmin_sync_path: str,
     log_dir: Path,
-    weekday_hour: int = 7,
+    weekday_hour: int = 8,
+    weekday_minute: int = 30,
     weekend_hour: int = 10,
+    weekend_minute: int = 0,
 ) -> dict:
     """Generate launchd plist configuration.
 
     Args:
         garmin_sync_path: Full path to garmin-sync executable
         log_dir: Directory for log files
-        weekday_hour: Hour to run on weekdays (Mon-Fri)
+        weekday_hour: Hour to run on weekdays (Mon-Fri); default 08:30
+        weekday_minute: Minute to run on weekdays
         weekend_hour: Hour to run on weekends (Sat-Sun)
+        weekend_minute: Minute to run on weekends
 
     The scheduled task runs sync followed by analyze (if configured),
     then shows a notification and opens the report.
@@ -82,15 +86,15 @@ def generate_plist(
             command,
         ],
         "StartCalendarInterval": [
-            # Weekdays (Mon=1 to Fri=5) at weekday_hour
-            {"Weekday": 1, "Hour": weekday_hour, "Minute": 0},
-            {"Weekday": 2, "Hour": weekday_hour, "Minute": 0},
-            {"Weekday": 3, "Hour": weekday_hour, "Minute": 0},
-            {"Weekday": 4, "Hour": weekday_hour, "Minute": 0},
-            {"Weekday": 5, "Hour": weekday_hour, "Minute": 0},
-            # Weekends (Sat=6, Sun=0) at weekend_hour
-            {"Weekday": 6, "Hour": weekend_hour, "Minute": 0},
-            {"Weekday": 0, "Hour": weekend_hour, "Minute": 0},
+            # Weekdays (Mon=1 to Fri=5) at weekday_hour:weekday_minute
+            {"Weekday": 1, "Hour": weekday_hour, "Minute": weekday_minute},
+            {"Weekday": 2, "Hour": weekday_hour, "Minute": weekday_minute},
+            {"Weekday": 3, "Hour": weekday_hour, "Minute": weekday_minute},
+            {"Weekday": 4, "Hour": weekday_hour, "Minute": weekday_minute},
+            {"Weekday": 5, "Hour": weekday_hour, "Minute": weekday_minute},
+            # Weekends (Sat=6, Sun=0) at weekend_hour:weekend_minute
+            {"Weekday": 6, "Hour": weekend_hour, "Minute": weekend_minute},
+            {"Weekday": 0, "Hour": weekend_hour, "Minute": weekend_minute},
         ],
         # Backup interval: check every 2 hours in case scheduled run was missed
         # (e.g., Mac was asleep at 7 AM). The idempotency check prevents duplicates.
@@ -209,18 +213,20 @@ def get_status() -> dict:
             plist_data = plistlib.load(f)
 
         intervals = plist_data.get("StartCalendarInterval", [])
-        weekday_hour = None
-        weekend_hour = None
+        weekday_hour = weekday_minute = None
+        weekend_hour = weekend_minute = None
 
         for interval in intervals:
             if interval.get("Weekday") in [1, 2, 3, 4, 5]:
                 weekday_hour = interval.get("Hour")
+                weekday_minute = interval.get("Minute", 0)
             elif interval.get("Weekday") in [0, 6]:
                 weekend_hour = interval.get("Hour")
+                weekend_minute = interval.get("Minute", 0)
 
         status["schedule"] = {
-            "weekday_time": _format_hour(weekday_hour) if weekday_hour is not None else None,
-            "weekend_time": _format_hour(weekend_hour) if weekend_hour is not None else None,
+            "weekday_time": _format_hour(weekday_hour, weekday_minute or 0) if weekday_hour is not None else None,
+            "weekend_time": _format_hour(weekend_hour, weekend_minute or 0) if weekend_hour is not None else None,
         }
 
         # Compute next run time from schedule
@@ -337,15 +343,11 @@ def _get_last_sync_age(log_path: Path) -> str | None:
     return None
 
 
-def _format_hour(hour: int) -> str:
-    """Format a 24-hour integer as a 12-hour time string."""
-    if hour == 0:
-        return "12:00 AM"
-    if hour < 12:
-        return f"{hour}:00 AM"
-    if hour == 12:
-        return "12:00 PM"
-    return f"{hour - 12}:00 PM"
+def _format_hour(hour: int, minute: int = 0) -> str:
+    """Format a 24-hour time as a 12-hour time string (e.g. 8, 30 -> '8:30 AM')."""
+    suffix = "AM" if hour < 12 else "PM"
+    h12 = hour % 12 or 12
+    return f"{h12}:{minute:02d} {suffix}"
 
 
 def _format_timedelta(delta: timedelta) -> str:

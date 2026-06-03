@@ -9,7 +9,7 @@ The scheduled task runs two commands:
 1. `garmin-sync sync all --days 1 --detailed` -- sync the latest day of data
 2. `garmin-sync analyze` -- run daily AI analysis
 
-**Default schedule:** Weekdays at 7:00 AM, Weekends at 10:00 AM.
+**Default schedule:** Weekdays at 8:30 AM, Weekends at 10:00 AM.
 
 ## Commands
 
@@ -39,7 +39,7 @@ Features:
 ## Windows (Task Scheduler)
 
 Creates two tasks via `schtasks.exe`:
-- **GarminSync-Weekday** -- runs at 7:00 AM Monday-Friday
+- **GarminSync-Weekday** -- runs at 8:30 AM Monday-Friday
 - **GarminSync-Weekend** -- runs at 10:00 AM Saturday-Sunday
 
 Uses a batch wrapper script. The wrapper path is validated to prevent script injection.
@@ -49,8 +49,8 @@ Uses a batch wrapper script. The wrapper path is validated to prevent script inj
 Add to your crontab (`crontab -e`):
 
 ```crontab
-# Weekdays at 7:00 AM
-0 7 * * 1-5 garmin-sync sync all --days 1 --detailed && garmin-sync analyze
+# Weekdays at 8:30 AM
+30 8 * * 1-5 garmin-sync sync all --days 1 --detailed && garmin-sync analyze
 
 # Weekends at 10:00 AM
 0 10 * * 0,6 garmin-sync sync all --days 1 --detailed && garmin-sync analyze

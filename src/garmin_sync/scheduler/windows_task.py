@@ -77,10 +77,14 @@ def _write_batch_script(
 
 def install(
     log_dir: Path,
-    weekday_hour: int = 7,
+    weekday_hour: int = 8,
+    weekday_minute: int = 30,
     weekend_hour: int = 10,
+    weekend_minute: int = 0,
 ) -> tuple[bool, str]:
     """Create Windows scheduled tasks for daily sync + analysis.
+
+    Defaults: weekdays 08:30, weekends 10:00.
 
     Returns:
         Tuple of (success, message)
@@ -92,8 +96,8 @@ def install(
     log_dir.mkdir(parents=True, exist_ok=True)
     bat_path = _write_batch_script(garmin_sync_path, log_dir)
 
-    weekday_time = f"{weekday_hour:02d}:00"
-    weekend_time = f"{weekend_hour:02d}:00"
+    weekday_time = f"{weekday_hour:02d}:{weekday_minute:02d}"
+    weekend_time = f"{weekend_hour:02d}:{weekend_minute:02d}"
 
     tasks = [
         (TASK_WEEKDAY, "MON,TUE,WED,THU,FRI", weekday_time),

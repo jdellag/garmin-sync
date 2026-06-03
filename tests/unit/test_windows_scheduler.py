@@ -43,6 +43,7 @@ class TestWindowsTaskInstall:
         assert "/Create" in first_args
         assert "GarminSync-Weekday" in first_args
         assert "MON,TUE,WED,THU,FRI" in first_args
+        assert "08:30" in first_args  # default weekday time
 
         second_args = mock_run.call_args_list[1][0][0]
         assert "GarminSync-Weekend" in second_args
@@ -102,10 +103,14 @@ class TestWindowsTaskInstall:
         mock_which.return_value = r"C:\Python\Scripts\garmin-sync.exe"
         mock_run.return_value = MagicMock(returncode=0, stderr="")
 
-        windows_task.install(tmp_path / "logs", weekday_hour=6, weekend_hour=9)
+        windows_task.install(
+            tmp_path / "logs",
+            weekday_hour=6, weekday_minute=15,
+            weekend_hour=9, weekend_minute=0,
+        )
 
         first_args = mock_run.call_args_list[0][0][0]
-        assert "06:00" in first_args
+        assert "06:15" in first_args  # custom hour AND minute pass through
 
         second_args = mock_run.call_args_list[1][0][0]
         assert "09:00" in second_args
