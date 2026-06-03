@@ -82,7 +82,7 @@ parameter is tagged: ✅ **established** · 🟡 **reasonable simplification** �
 - HRV monitoring works, but the **validated method uses a 7-day rolling average of log-transformed RMSSD (ln rMSSD)** vs. a longer baseline, judged against the **smallest worthwhile change (~0.5×CV)** — not a single morning value vs. a fixed −20% linear ramp (Plews & Buchheit). The day-to-day **variability (CV) of HRV** is itself a maladaptation signal. → **CHANGE:** smooth HRV over ~7 days and personalize the threshold to the athlete's own CV.
 - Component weights are reasonable expert judgment but **arbitrary** → **DOCUMENT** as a heuristic composite; don't claim empirical weighting.
 
-**Sources:** Plews & Buchheit HRV case study [ResearchGate](https://www.researchgate.net/publication/221863314_Heart_rate_variability_in_elite_triathletes_is_variation_in_variability_the_key_to_effective_training_A_case_comparison) · Altini HRV primer [blog](https://marcoaltini.substack.com/p/a-brief-history-of-heart-rate-variability) · additional HRV (confirm-later): [PMID 24334285](https://pubmed.ncbi.nlm.nih.gov/24334285/), [PMID 18308872](https://pubmed.ncbi.nlm.nih.gov/18308872/)
+**Sources:** Plews & Buchheit HRV case study [ResearchGate](https://www.researchgate.net/publication/221863314_Heart_rate_variability_in_elite_triathletes_is_variation_in_variability_the_key_to_effective_training_A_case_comparison) · Altini HRV primer [blog](https://marcoaltini.substack.com/p/a-brief-history-of-heart-rate-variability) · Plews et al. 2014 — ≥3 valid days/wk of Ln rMSSD; averaging benefit plateaus ~3–4 days [PMID 24334285](https://pubmed.ncbi.nlm.nih.gov/24334285/) · Bosquet et al. 2008 — HR/HRV overreaching signals are small and "may fall within day-to-day variability" (backs judging vs personal CV, not a fixed %) [PMID 18308872](https://pubmed.ncbi.nlm.nih.gov/18308872/)
 
 ---
 
@@ -113,7 +113,9 @@ Our targets (sets/wk): quads 10, hams 8, glutes 10, chest 10, lats 10, delts 10,
 - Specifically low if the goal is growth: **hamstrings 8, biceps 6, triceps 6, calves 6**.
 - **Recommendation → decide the goal and label it.** (a) If "moderate general fitness" (as the docs say) → **KEEP** but state it's a maintenance/floor target, not hypertrophy-optimal. (b) If hypertrophy is intended → **raise** toward MEV/MAV (chest 12–16, hams 10–12, biceps/triceps 8–12 direct). The defaults are user-overridable in `profile.toml`, which mitigates this.
 
-**Sources:** RP MEV/MAV/MRV [Israetel/RP](https://drmikeisraetel.com/dr-mike-israetel-mv-mev-mav-mrv-explained/) · volume dose-response (confirm-later): [PMID 27433992](https://pubmed.ncbi.nlm.nih.gov/27433992/), [PMID 35291645](https://pubmed.ncbi.nlm.nih.gov/35291645/), [Sports Med 2025](https://link.springer.com/article/10.1007/s40279-025-02344-w)
+**Sources:** RP MEV/MAV/MRV [Israetel/RP](https://drmikeisraetel.com/dr-mike-israetel-mv-mev-mav-mrv-explained/) · Schoenfeld/Ogborn/Krieger 2017 — graded dose-response, 10+ sets/muscle tier favored [PMID 27433992](https://pubmed.ncbi.nlm.nih.gov/27433992/) · Baz-Valle et al. 2022 — recommends **12–20 weekly sets/muscle** for hypertrophy [PMID 35291645](https://pubmed.ncbi.nlm.nih.gov/35291645/)
+
+> **Update (pass a):** defaults were raised to hypertrophy ranges (majors ~12–14), which now sit inside Baz-Valle's recommended **12–20 sets/muscle/week** band — resolving the "under-dosed" finding.
 
 ---
 
@@ -123,11 +125,11 @@ Our targets (sets/wk): quads 10, hams 8, glutes 10, chest 10, lats 10, delts 10,
 |--------|---------|------|
 | Epley 1RM `w×(1+reps/30)`, **reps 1–10 only** | ✅ established | standard formula; capping at low reps is correct (accuracy degrades >~10–12 reps); Epley≈Brzycki, Epley slightly higher at high reps |
 | HR drift / decoupling, **<5% good** | ✅ practitioner standard | TrainingPeaks/Friel: <5% strong, 5–10% moderate, >10% poor |
-| Garmin/Firstbeat VO₂max | 🟡 reasonable (consume as-is) | Firstbeat reports high accuracy (~±5%); **confirm-later** (PDF fetch refused) |
+| Garmin/Firstbeat VO₂max | 🟡 reasonable (consume as-is) | Firstbeat: ~95% accuracy / ~5% MAPE running (92% cycling); chest-strap MAE 3–5, wrist-only 5–8 ml/kg/min — comparable to a direct lab test (~5%) |
 | Deload: ≥3 wks >120% baseline + declining recovery | 🟡 reasonable heuristic | consistent with monotony/strain & overreaching literature; not a single cited cutoff |
 | Pacing CoV / negative splits | 🟡 reasonable descriptors | standard performance signals |
 
-**Sources:** decoupling [TrainingPeaks](https://www.trainingpeaks.com/coach-blog/aerobic-endurance-and-decoupling/) · Firstbeat VO₂max [white paper](https://assets.firstbeat.com/firstbeat/uploads/2017/06/white_paper_VO2max_30.6.2017.pdf) (confirm-later) · 1RM formulas (textbook; weightliftcalculator source rated unreliable)
+**Sources:** decoupling [TrainingPeaks](https://www.trainingpeaks.com/coach-blog/aerobic-endurance-and-decoupling/) · Firstbeat VO₂max [white paper](https://assets.firstbeat.com/firstbeat/uploads/2017/06/white_paper_VO2max_30.6.2017.pdf) + accuracy figures via [vo2maxcalculators](https://vo2maxcalculators.com/wearables/garmin-vo2-max-accuracy/) (the PDF host blocks automated fetch; figures cross-checked) · 1RM formulas (textbook; weightliftcalculator source rated unreliable)
 
 ---
 
@@ -139,5 +141,10 @@ Our targets (sets/wk): quads 10, hams 8, glutes 10, chest 10, lats 10, delts 10,
 4. ✅ **Core methods are sound:** sRPE for strength, the sRPE formula, Foster monotony/strain, Epley (reps≤10), decoupling <5%. Mostly need honest "approximate/heuristic" labeling.
 5. 🟡 **Our own approximations (STL volume-weighting, EPOC+sRPE mix, estimation heuristics, scoring weights)** are defensible simplifications — keep, but **document** rather than present as validated.
 
-## Confirm-later (sources surfaced, full text not yet fetched)
-PMID 24334285, 18308872, 27433992, 35291645 · [Sports Med 2025](https://link.springer.com/article/10.1007/s40279-025-02344-w) · [PMC12881131](https://pmc.ncbi.nlm.nih.gov/articles/PMC12881131/) · [Front Sports 2025](https://www.frontiersin.org/journals/sports-and-active-living/articles/10.3389/fspor.2025.1707991/full) · Firstbeat VO₂max PDF
+## Source verification (pass c — done)
+All load-bearing confirm-later sources were fetched and folded into the areas above:
+- **PMID 27433992** (Schoenfeld/Ogborn/Krieger 2017) & **PMID 35291645** (Baz-Valle 2022, **12–20 sets/muscle/wk**) → Area 5; corroborate the raised hypertrophy targets.
+- **PMID 24334285** (Plews 2014, ≥3 days Ln rMSSD) & **PMID 18308872** (Bosquet 2008, signals within day-to-day variability) → Area 3; corroborate the smoothed + CV-personalized HRV retune.
+- **Firstbeat VO₂max** → Area 6 (~5% MAPE running; wrist-only 5–8 ml/kg/min).
+
+Not fetched (supplementary, **not load-bearing** — conclusions already established): [Sports Med 2025](https://link.springer.com/article/10.1007/s40279-025-02344-w) · [PMC12881131](https://pmc.ncbi.nlm.nih.gov/articles/PMC12881131/) · [Front Sports 2025](https://www.frontiersin.org/journals/sports-and-active-living/articles/10.3389/fspor.2025.1707991/full).
