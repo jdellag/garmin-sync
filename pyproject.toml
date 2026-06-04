@@ -18,11 +18,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
-
-[project.urls]
-Homepage = "https://github.com/jdellag/garmin-sync"
-Repository = "https://github.com/jdellag/garmin-sync"
-Issues = "https://github.com/jdellag/garmin-sync/issues"
 dependencies = [
     "garminconnect>=0.3.0",
     "curl_cffi>=0.5.0",
@@ -38,6 +33,11 @@ dependencies = [
     "mcp[cli]>=1.0.0",
     "platformdirs>=4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jdellag/garmin-sync"
+Repository = "https://github.com/jdellag/garmin-sync"
+Issues = "https://github.com/jdellag/garmin-sync/issues"
 
 [project.optional-dependencies]
 dev = [
