@@ -40,20 +40,21 @@ class TestGarminAuthManager:
         manager = GarminAuthManager(token_dir=temp_dir / "tokens")
         assert manager.has_tokens() is False
 
-    def test_has_tokens_with_oauth1(self, temp_dir):
-        """Test has_tokens with OAuth1 token."""
+    def test_has_tokens_with_new_format(self, temp_dir):
+        """Test has_tokens with the garminconnect 0.3.x token file."""
         token_dir = temp_dir / "tokens"
         token_dir.mkdir(parents=True)
-        (token_dir / "oauth1_token.json").write_text("{}")
+        (token_dir / "garmin_tokens.json").write_text("{}")
 
         manager = GarminAuthManager(token_dir=token_dir)
         assert manager.has_tokens() is True
 
-    def test_has_tokens_with_oauth2(self, temp_dir):
-        """Test has_tokens with OAuth2 token."""
+    def test_has_tokens_with_legacy_oauth1(self, temp_dir):
+        """Test has_tokens recognizes legacy garth oauth1 token files
+        (backward compat for users who haven't re-logged-in)."""
         token_dir = temp_dir / "tokens"
         token_dir.mkdir(parents=True)
-        (token_dir / "oauth2_token.json").write_text("{}")
+        (token_dir / "oauth1_token.json").write_text("{}")
 
         manager = GarminAuthManager(token_dir=token_dir)
         assert manager.has_tokens() is True
@@ -62,10 +63,10 @@ class TestGarminAuthManager:
     def test_login_success(self, mock_garmin_class, temp_dir):
         """Test successful login."""
         mock_client = MagicMock()
-        mock_client.garth = MagicMock()
         mock_garmin_class.return_value = mock_client
 
-        manager = GarminAuthManager(token_dir=temp_dir / "tokens")
+        token_dir = temp_dir / "tokens"
+        manager = GarminAuthManager(token_dir=token_dir)
         result = manager.login("test@example.com", "password123")
 
         assert result is True
@@ -74,9 +75,8 @@ class TestGarminAuthManager:
         call = mock_garmin_class.call_args
         assert call.args == ("test@example.com", "password123")
         assert callable(call.kwargs.get("prompt_mfa"))
-        mock_client.login.assert_called_once()
-        # Tokens are saved using client's garth instance
-        mock_client.garth.dump.assert_called_once()
+        # login(tokenstore) authenticates + saves tokens in one call.
+        mock_client.login.assert_called_once_with(str(token_dir))
         # Password is dropped from the client after the token dump.
         assert mock_client.password is None
 
@@ -99,8 +99,7 @@ class TestGarminAuthManager:
         """0-byte token files (from an interrupted login) are not 'usable'."""
         token_dir = temp_dir / "tokens"
         token_dir.mkdir(parents=True)
-        (token_dir / "oauth1_token.json").write_text("")
-        (token_dir / "oauth2_token.json").write_text("")
+        (token_dir / "garmin_tokens.json").write_text("")
 
         manager = GarminAuthManager(token_dir=token_dir)
         assert manager.has_tokens() is False
@@ -128,10 +127,9 @@ class TestGarminAuthManager:
     @patch("garmin_sync.auth.garmin_auth.Garmin")
     def test_resume_session_success(self, mock_garmin_class, temp_dir):
         """Test successful session resume."""
-        # Create token files
         token_dir = temp_dir / "tokens"
         token_dir.mkdir(parents=True)
-        (token_dir / "oauth1_token.json").write_text("{}")
+        (token_dir / "garmin_tokens.json").write_text("{}")
 
         mock_client = MagicMock()
         mock_garmin_class.return_value = mock_client
@@ -141,7 +139,7 @@ class TestGarminAuthManager:
 
         assert result is True
         mock_garmin_class.assert_called_once_with()
-        mock_client.login.assert_called_once_with(tokenstore=str(token_dir))
+        mock_client.login.assert_called_once_with(str(token_dir))
 
     @patch("garmin_sync.auth.garmin_auth.Garmin")
     def test_resume_session_failure(self, mock_garmin_class, temp_dir):
@@ -214,10 +212,9 @@ class TestGarminAuthManager:
     @patch("garmin_sync.auth.garmin_auth.Garmin")
     def test_ensure_authenticated_with_resume(self, mock_garmin_class, temp_dir):
         """Test ensure_authenticated resumes session."""
-        # Create token files
         token_dir = temp_dir / "tokens"
         token_dir.mkdir(parents=True)
-        (token_dir / "oauth1_token.json").write_text("{}")
+        (token_dir / "garmin_tokens.json").write_text("{}")
 
         mock_client = MagicMock()
         mock_garmin_class.return_value = mock_client
@@ -226,9 +223,8 @@ class TestGarminAuthManager:
         client = manager.ensure_authenticated()
 
         assert client is not None
-        # Verify resume_session was called with tokenstore
         mock_garmin_class.assert_called_once_with()
-        mock_client.login.assert_called_once_with(tokenstore=str(token_dir))
+        mock_client.login.assert_called_once_with(str(token_dir))
 
     def test_token_dir_created_with_permissions(self, temp_dir):
         """Test token directory is created with secure permissions."""

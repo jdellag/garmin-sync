@@ -54,13 +54,17 @@ def default_profile_path() -> Path:
     return default_config_dir() / "profile.toml"
 
 
-def default_garth_token_dir() -> Path:
-    """Return the default directory for garth OAuth tokens.
+def default_token_dir() -> Path:
+    """Return the default directory for Garmin OAuth tokens.
 
-    The ``garth`` library itself writes to ``~/.garminconnect`` on every
-    platform, so we keep that convention.  Moving it would break token
-    discovery after ``garmin-sync auth login``.  Users who need a
-    different location can override via the
-    ``GARMIN_SYNC_GARTH_TOKEN_DIR`` environment variable.
+    ``python-garminconnect`` writes ``garmin_tokens.json`` to
+    ``~/.garminconnect`` on every platform, so we keep that convention.
+    Users who need a different location can override via the
+    ``GARMIN_SYNC_TOKEN_DIR`` environment variable.
     """
     return Path.home() / ".garminconnect"
+
+
+# Backward-compat alias (garth naming). Internal only — external consumers
+# should use default_token_dir().
+default_garth_token_dir = default_token_dir

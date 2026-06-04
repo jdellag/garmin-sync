@@ -1,5 +1,6 @@
 """Garmin Connect API client wrapper."""
 
+import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
@@ -8,6 +9,8 @@ from garminconnect import Garmin
 from garmin_sync.api.rate_limiter import RateLimiter, retry_with_backoff
 from garmin_sync.auth.garmin_auth import GarminAuthManager, get_auth_manager
 from garmin_sync.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class GarminAPIError(Exception):
@@ -37,7 +40,7 @@ class GarminClient:
             rate_limiter: Rate limiter (creates default if None)
         """
         settings = get_settings()
-        self._auth = auth_manager or get_auth_manager(settings.garth_token_dir)
+        self._auth = auth_manager or get_auth_manager(settings.token_dir)
         self._rate_limiter = rate_limiter or RateLimiter(
             calls_per_minute=settings.rate_limit_calls_per_minute,
         )
@@ -304,74 +307,72 @@ class GarminClient:
         return self._api_call("get_body_battery", start_date.isoformat(), end_date.isoformat()) or []
 
     def get_daily_sleep_batch(self, end_date: date, days: int = 30) -> list[dict]:
-        """Fetch sleep scores for multiple days using garth batch endpoint.
+        """Fetch sleep scores for multiple days via per-day calls.
 
         Args:
-            end_date: End date
+            end_date: End date (inclusive)
             days: Number of days to fetch
 
         Returns:
             List of daily sleep score dictionaries
         """
-        from garth import DailySleep
-
-        self._rate_limiter.acquire()
-
-        try:
-            # Use the Garmin client's garth instance for authenticated requests
-            stats = DailySleep.list(end_date, period=days, client=self._client.garth)
-            return [
-                {"calendarDate": s.calendar_date.isoformat(), "sleepScore": s.value}
-                for s in stats
-            ]
-        except Exception as e:
-            raise GarminAPIError(f"Batch sleep fetch failed: {e}") from e
+        results = []
+        for i in range(days):
+            day = end_date - timedelta(days=i)
+            try:
+                data = self._api_call("get_sleep_data", day.isoformat())
+                if data:
+                    cal_date = data.get("dailySleepDTO", {}).get("calendarDate")
+                    score = data.get("sleepScores", {}).get("overall", {}).get("value")
+                    if cal_date:
+                        results.append({"calendarDate": cal_date, "sleepScore": score})
+            except Exception:
+                logger.debug("Sleep fetch failed for %s", day, exc_info=True)
+        return results
 
     def get_daily_stress_batch(self, end_date: date, days: int = 30) -> list[dict]:
-        """Fetch stress data for multiple days using garth batch endpoint.
+        """Fetch stress data for multiple days via per-day calls.
 
         Args:
-            end_date: End date
+            end_date: End date (inclusive)
             days: Number of days to fetch
 
         Returns:
             List of daily stress dictionaries
         """
-        from garth import DailyStress
-
-        self._rate_limiter.acquire()
-
-        try:
-            stats = DailyStress.list(end_date, period=days, client=self._client.garth)
-            return [
-                {"calendarDate": s.calendar_date.isoformat(), "avgStress": s.overall_stress_level}
-                for s in stats
-            ]
-        except Exception as e:
-            raise GarminAPIError(f"Batch stress fetch failed: {e}") from e
+        results = []
+        for i in range(days):
+            day = end_date - timedelta(days=i)
+            try:
+                data = self._api_call("get_stress_data", day.isoformat())
+                if data:
+                    avg = data.get("overallStressLevel")
+                    results.append({"calendarDate": day.isoformat(), "avgStress": avg})
+            except Exception:
+                logger.debug("Stress fetch failed for %s", day, exc_info=True)
+        return results
 
     def get_daily_hrv_batch(self, end_date: date, days: int = 30) -> list[dict]:
-        """Fetch HRV data for multiple days using garth batch endpoint.
+        """Fetch HRV data for multiple days via per-day calls.
 
         Args:
-            end_date: End date
+            end_date: End date (inclusive)
             days: Number of days to fetch
 
         Returns:
             List of daily HRV dictionaries
         """
-        from garth import DailyHRV
-
-        self._rate_limiter.acquire()
-
-        try:
-            stats = DailyHRV.list(end_date, period=days, client=self._client.garth)
-            return [
-                {"calendarDate": s.calendar_date.isoformat(), "hrvValue": s.weekly_avg}
-                for s in stats
-            ]
-        except Exception as e:
-            raise GarminAPIError(f"Batch HRV fetch failed: {e}") from e
+        results = []
+        for i in range(days):
+            day = end_date - timedelta(days=i)
+            try:
+                data = self._api_call("get_hrv_data", day.isoformat())
+                if data:
+                    weekly = data.get("weeklyAvg")
+                    results.append({"calendarDate": day.isoformat(), "hrvValue": weekly})
+            except Exception:
+                logger.debug("HRV fetch failed for %s", day, exc_info=True)
+        return results
 
     # ==================== Respiration & SpO2 ====================
 

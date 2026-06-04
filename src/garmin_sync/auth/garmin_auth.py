@@ -1,4 +1,9 @@
-"""Garmin Connect authentication management."""
+"""Garmin Connect authentication management.
+
+Uses python-garminconnect >=0.3.0's native DI-OAuth engine (curl_cffi-based
+mobile-SSO flow). Tokens are persisted to a single ``garmin_tokens.json``
+file in the token directory.
+"""
 
 import logging
 import sys
@@ -7,7 +12,7 @@ from typing import Callable, Optional
 
 from garminconnect import Garmin
 
-from garmin_sync.config.paths import default_garth_token_dir
+from garmin_sync.config.paths import default_token_dir
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +28,12 @@ class TokenExpiredError(AuthenticationError):
 
 
 class GarminAuthManager:
-    """Manages Garmin Connect authentication via Garth OAuth."""
+    """Manages Garmin Connect authentication via python-garminconnect.
+
+    Tokens are stored in ``<token_dir>/garmin_tokens.json``.
+    """
+
+    TOKEN_FILENAME = "garmin_tokens.json"
 
     def __init__(self, token_dir: Optional[Path] = None):
         """Initialize auth manager.
@@ -32,7 +42,7 @@ class GarminAuthManager:
             token_dir: Directory for storing OAuth tokens.
                       Defaults to ~/.garminconnect
         """
-        self.token_dir = token_dir or default_garth_token_dir()
+        self.token_dir = token_dir or default_token_dir()
         self._client: Optional[Garmin] = None
 
     @property
@@ -61,7 +71,7 @@ class GarminAuthManager:
             password: Garmin account password
             prompt_mfa: Optional callable returning a 2FA/MFA code. Defaults to
                 a stdin prompt so accounts with two-factor auth enabled can
-                complete login instead of failing with an opaque error.
+                complete login.
 
         Returns:
             True if login successful
@@ -74,17 +84,13 @@ class GarminAuthManager:
                 return input("Garmin MFA/2FA code: ")
 
         try:
-            # Garmin handles garth internally; pass an MFA prompt so a 2FA
-            # account gets a code prompt rather than an opaque profile error.
-            self._client = Garmin(email, password, prompt_mfa=prompt_mfa)
-            self._client.login()
-
-            # Save tokens using Garmin's garth client
             self._ensure_token_dir()
-            self._client.garth.dump(str(self.token_dir))
+            self._client = Garmin(email, password, prompt_mfa=prompt_mfa)
+            # login() authenticates AND persists tokens to the tokenstore dir.
+            self._client.login(str(self.token_dir))
 
-            # Tighten permissions on the token files themselves; garth writes
-            # them with the process umask (typically 0o644).
+            # Tighten permissions on the token files; the library writes them
+            # with the process umask (typically 0o644).
             for token_file in self.token_dir.glob("*.json"):
                 try:
                     token_file.chmod(0o600)
@@ -116,9 +122,8 @@ class GarminAuthManager:
             return False
 
         try:
-            # Create Garmin client and load tokens from tokenstore
             self._client = Garmin()
-            self._client.login(tokenstore=str(self.token_dir))
+            self._client.login(str(self.token_dir))
             return True
 
         except Exception:
@@ -137,12 +142,15 @@ class GarminAuthManager:
         self._client = None
 
     def has_tokens(self) -> bool:
-        """Check whether usable OAuth tokens exist.
+        """Check whether a usable token file exists.
 
-        garth always creates both token files but writes content only when a
-        token is actually present, so a partial/interrupted login can leave
-        0-byte files. Require a non-empty file rather than mere existence,
-        otherwise the auth gate passes and the real failure surfaces later.
+        The library writes ``garmin_tokens.json``; an interrupted login can
+        leave a 0-byte file. Require non-empty to avoid letting the auth gate
+        pass when the real failure would surface later.
+
+        Also checks for legacy garth token files (``oauth1_token.json``) so
+        ``auth status`` doesn't report "not authenticated" for users who
+        haven't re-logged-in after the migration.
         """
         def _nonempty(name: str) -> bool:
             p = self.token_dir / name
@@ -151,7 +159,10 @@ class GarminAuthManager:
             except OSError:
                 return False
 
-        return _nonempty("oauth1_token.json") or _nonempty("oauth2_token.json")
+        return (
+            _nonempty(self.TOKEN_FILENAME)
+            or _nonempty("oauth1_token.json")  # legacy garth
+        )
 
     def get_status(self) -> dict:
         """Get current authentication status.

@@ -173,11 +173,11 @@ def setup_wizard(
         console.print("[bold cyan]Step 1/4: Garmin Connect Login[/bold cyan]")
         console.print("─" * 40)
 
-        auth = get_auth_manager(settings.garth_token_dir)
+        auth = get_auth_manager(settings.token_dir)
         status = auth.get_status()
 
         if status["authenticated"]:
-            console.print(f"[green]Already logged in[/green] (tokens in {settings.garth_token_dir})")
+            console.print(f"[green]Already logged in[/green] (tokens in {settings.token_dir})")
             if typer.confirm("Re-authenticate?", default=False):
                 email = Prompt.ask("Enter your Garmin email")
                 password = Prompt.ask("Enter your Garmin password", password=True)
@@ -253,7 +253,7 @@ def auth_login(
 ):
     """Interactive login to Garmin Connect."""
     settings = get_settings()
-    auth = get_auth_manager(settings.garth_token_dir)
+    auth = get_auth_manager(settings.token_dir)
 
     # Prompt for credentials if not provided
     if not email:
@@ -265,7 +265,7 @@ def auth_login(
         try:
             auth.login(email, password)
             console.print("[green]Successfully logged in![/green]")
-            console.print(f"Tokens saved to: {settings.garth_token_dir}")
+            console.print(f"Tokens saved to: {settings.token_dir}")
         except AuthenticationError as e:
             console.print(f"[red]Login failed: {e}[/red]")
             raise typer.Exit(1)
@@ -275,7 +275,7 @@ def auth_login(
 def auth_status():
     """Check authentication status."""
     settings = get_settings()
-    auth = get_auth_manager(settings.garth_token_dir)
+    auth = get_auth_manager(settings.token_dir)
 
     status = auth.get_status()
 
@@ -305,7 +305,7 @@ def auth_logout(
 ):
     """Clear saved authentication tokens."""
     settings = get_settings()
-    auth = get_auth_manager(settings.garth_token_dir)
+    auth = get_auth_manager(settings.token_dir)
 
     if not auth.has_tokens():
         console.print("[yellow]No tokens to remove.[/yellow]")
@@ -336,7 +336,7 @@ def sync_all_cmd(
         raise typer.Exit(0)
 
     settings = get_settings()
-    auth = get_auth_manager(settings.garth_token_dir)
+    auth = get_auth_manager(settings.token_dir)
 
     if not auth.has_tokens():
         console.print("[red]Not authenticated. Run 'garmin-sync auth login' first.[/red]")
@@ -446,7 +446,7 @@ def sync_activities_cmd(
         raise typer.Exit(0)
 
     settings = get_settings()
-    auth = get_auth_manager(settings.garth_token_dir)
+    auth = get_auth_manager(settings.token_dir)
 
     if not auth.has_tokens():
         console.print("[red]Not authenticated. Run 'garmin-sync auth login' first.[/red]")
@@ -494,7 +494,7 @@ def sync_health_cmd(
         raise typer.Exit(0)
 
     settings = get_settings()
-    auth = get_auth_manager(settings.garth_token_dir)
+    auth = get_auth_manager(settings.token_dir)
 
     if not auth.has_tokens():
         console.print("[red]Not authenticated. Run 'garmin-sync auth login' first.[/red]")
@@ -821,7 +821,7 @@ def schedule_install_cmd():
     settings = get_settings()
 
     # Verify authentication before installing
-    auth = get_auth_manager(settings.garth_token_dir)
+    auth = get_auth_manager(settings.token_dir)
     if not auth.has_tokens():
         console.print("[red]Not authenticated. Run 'garmin-sync auth login' first.[/red]")
         raise typer.Exit(1)

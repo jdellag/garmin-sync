@@ -25,12 +25,12 @@ class TestSettings:
 
     def test_default_paths(self):
         """Test that default paths match the platform-aware helpers."""
-        from garmin_sync.config.paths import default_data_dir, default_garth_token_dir
+        from garmin_sync.config.paths import default_data_dir, default_token_dir
 
         settings = Settings()
 
         assert settings.data_dir == default_data_dir()
-        assert settings.garth_token_dir == default_garth_token_dir()
+        assert settings.token_dir == default_token_dir()
 
     def test_computed_paths(self):
         """Test computed path properties."""
@@ -95,12 +95,12 @@ class TestSettings:
         """Test that ensure_directories creates required directories."""
         settings = Settings(
             data_dir=temp_dir / "data",
-            garth_token_dir=temp_dir / "tokens",
+            token_dir=temp_dir / "tokens",
         )
 
         # Directories should not exist yet
         assert not settings.data_dir.exists()
-        assert not settings.garth_token_dir.exists()
+        assert not settings.token_dir.exists()
 
         settings.ensure_directories()
 
@@ -108,7 +108,7 @@ class TestSettings:
         assert settings.data_dir.exists()
         assert settings.fit_files_dir.exists()
         assert settings.exports_dir.exists()
-        assert settings.garth_token_dir.exists()
+        assert settings.token_dir.exists()
 
     def test_sync_days_validation(self):
         """Test that sync_days is validated."""

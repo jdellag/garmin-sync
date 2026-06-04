@@ -105,11 +105,11 @@ class TestDefaultConfigPath:
 
 
 class TestDefaultGarthTokenDir:
-    """Test default_garth_token_dir()."""
+    """Test default_token_dir()."""
 
     def test_always_returns_home_garminconnect(self):
         """Garth token dir is always ~/.garminconnect regardless of platform."""
-        result = paths.default_garth_token_dir()
+        result = paths.default_token_dir()
         assert result == Path.home() / ".garminconnect"
         assert result.name == ".garminconnect"
 
@@ -118,6 +118,6 @@ class TestDefaultGarthTokenDir:
         """Garth token dir is the same even on Windows (garth convention)."""
         mock_sys.platform = "win32"
 
-        result = paths.default_garth_token_dir()
+        result = paths.default_token_dir()
 
         assert result == Path.home() / ".garminconnect"

@@ -201,7 +201,7 @@ class SleepDaily:
 
     @classmethod
     def from_batch_response(cls, data: dict) -> "SleepDaily":
-        """Create SleepDaily from garth batch endpoint response."""
+        """Create SleepDaily from Garmin API batch response."""
         return cls(
             date=data.get("calendarDate", ""),
             sleep_score=data.get("sleepScore"),
@@ -238,7 +238,7 @@ class StressDaily:
 
     @classmethod
     def from_batch_response(cls, data: dict) -> "StressDaily":
-        """Create StressDaily from garth batch endpoint response."""
+        """Create StressDaily from Garmin API batch response."""
         return cls(
             date=data.get("calendarDate", ""),
             avg_stress_level=data.get("avgStress"),
@@ -279,7 +279,7 @@ class HRVDaily:
 
     @classmethod
     def from_batch_response(cls, data: dict) -> "HRVDaily":
-        """Create HRVDaily from garth batch endpoint response."""
+        """Create HRVDaily from Garmin API batch response."""
         return cls(
             date=data.get("calendarDate", ""),
             hrv_value=data.get("hrvValue"),

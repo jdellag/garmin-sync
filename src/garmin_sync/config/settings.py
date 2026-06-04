@@ -4,13 +4,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from garmin_sync.config.paths import (
     default_config_dir,
     default_data_dir,
-    default_garth_token_dir,
+    default_token_dir,
 )
 
 
@@ -35,9 +35,16 @@ class Settings(BaseSettings):
         default_factory=default_data_dir,
         description="Directory for storing data files",
     )
-    garth_token_dir: Path = Field(
-        default_factory=default_garth_token_dir,
-        description="Directory for Garth OAuth tokens",
+    token_dir: Path = Field(
+        default_factory=default_token_dir,
+        description="Directory for Garmin OAuth tokens",
+        # Accepts GARMIN_SYNC_TOKEN_DIR (primary), the constructor kwarg
+        # `token_dir`, and the legacy env var GARMIN_SYNC_GARTH_TOKEN_DIR.
+        validation_alias=AliasChoices(
+            "token_dir",
+            "GARMIN_SYNC_TOKEN_DIR",
+            "GARMIN_SYNC_GARTH_TOKEN_DIR",
+        ),
     )
     config_dir: Path = Field(
         default_factory=default_config_dir,
@@ -45,7 +52,7 @@ class Settings(BaseSettings):
                     "(override with GARMIN_SYNC_CONFIG_DIR)",
     )
 
-    @field_validator("data_dir", "garth_token_dir", "config_dir", mode="after")
+    @field_validator("data_dir", "token_dir", "config_dir", mode="after")
     @classmethod
     def _expand_user_paths(cls, v: Path) -> Path:
         """Expand ~ so e.g. GARMIN_SYNC_DATA_DIR=~/foo resolves to $HOME/foo
@@ -137,12 +144,12 @@ class Settings(BaseSettings):
         self.exports_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
-        self.garth_token_dir.mkdir(parents=True, exist_ok=True)
+        self.token_dir.mkdir(parents=True, exist_ok=True)
         # The token dir holds OAuth credentials — keep it owner-only, not at
         # the process umask (login() also tightens it, but this covers the
         # window before the first login).
         try:
-            self.garth_token_dir.chmod(0o700)
+            self.token_dir.chmod(0o700)
         except OSError:
             pass  # e.g. Windows
 
