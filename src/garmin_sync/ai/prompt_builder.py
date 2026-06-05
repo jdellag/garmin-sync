@@ -153,7 +153,7 @@ def build_analysis_prompt(
 
     prompt_parts.extend([
         "## Data Dictionary",
-        "- **HRV (Heart Rate Variability)**: Measured in milliseconds. Higher values indicate better recovery and parasympathetic tone. Compare to personal baseline, not absolute values.",
+        "- **HRV (Heart Rate Variability)**: Measured in milliseconds. Two baselines are shown side-by-side: (1) OUR computation: 7-day rolling mean vs 28-day baseline with personalized CV/SWC thresholds (Plews/Buchheit method). (2) GARMIN's HRV Status: their proprietary long-term baseline range + weekly avg. Both are valid; ours is more responsive to recent trends, Garmin's is more stable. Use 'meaningful_change' to judge whether a delta matters for this specific person.",
         "- **Resting HR**: Beats per minute. Lower is generally better. Elevated RHR (3-5+ bpm above baseline) can indicate fatigue, illness, or overtraining.",
         "- **Training Load**: Combined training stress. Cardio: Garmin's EPOC-based load (HR-derived). Strength: session RPE × duration (sRPE method, estimated when RPE not logged). Both contribute to A:C ratio. Note: combining EPOC and sRPE is approximate — the cardio/strength breakdown shows provenance.",
         "- **AC Ratio (Acute:Chronic)**: 7-day load vs the prior 3-week weekly average (uncoupled — the recent week is excluded from the baseline). A DESCRIPTIVE load-ramp signal, NOT an injury predictor (the ACWR injury 'sweet spot' is not evidence-supported; Impellizzeri 2020). Read as: <0.8 reduced load, 0.8-1.3 steady, 1.3-1.5 building, >1.5 rapid increase (check recovery). Combines cardio + strength load, which is approximate.",

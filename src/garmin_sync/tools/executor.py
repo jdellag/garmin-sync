@@ -142,11 +142,22 @@ class ToolExecutor:
 
         result = {
             "hrv": {
+                # Our computation (Plews/Buchheit: 7d rolling mean vs 28d baseline)
                 "baseline_7d": hrv.get("baseline_7d"),
+                "baseline_28d": hrv.get("baseline_28d"),
                 "last_night": hrv.get("last_night"),
                 "delta_pct": hrv.get("delta_from_baseline"),
-                "status": hrv.get("status"),
+                "cv_pct": hrv.get("cv_pct"),
+                "meaningful_change": hrv.get("meaningful_change"),
                 "days_below_baseline": hrv.get("days_below_baseline", 0),
+                # Garmin's own HRV Status (their proprietary long-term baseline)
+                "garmin_status": hrv.get("status"),
+                "garmin_weekly_avg": hrv.get("garmin_weekly_avg"),
+                "garmin_baseline_range": (
+                    f"{hrv.get('garmin_baseline_low')}-{hrv.get('garmin_baseline_high')}"
+                    if hrv.get("garmin_baseline_low") is not None
+                    else None
+                ),
             },
             "sleep": {
                 "avg_hours": (

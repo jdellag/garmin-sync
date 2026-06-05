@@ -180,7 +180,7 @@ class TestMCPServer:
 
         assert result["hrv"]["baseline_7d"] == 65
         assert result["hrv"]["last_night"] == 62
-        assert result["hrv"]["status"] == "BALANCED"
+        assert result["hrv"]["garmin_status"] == "BALANCED"
         assert result["sleep"]["avg_hours"] == 8.0
         assert result["body_battery"]["overnight_recovery"] == 60
         assert result["resting_hr"]["current"] == 48

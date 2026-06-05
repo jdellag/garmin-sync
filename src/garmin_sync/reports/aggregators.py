@@ -388,6 +388,7 @@ class DataAggregator:
         """
         cursor = self.db.connection.cursor()
         result = {
+            # Our computed values (Plews/Buchheit method)
             "baseline_7d": None,
             "baseline_28d": None,
             "last_night": None,
@@ -398,13 +399,19 @@ class DataAggregator:
             "days_below_baseline": 0,
             "status": None,
             "daily_values": [],
+            # Garmin's own HRV Status (their proprietary long-term baseline)
+            "garmin_weekly_avg": None,
+            "garmin_baseline_low": None,
+            "garmin_baseline_high": None,
+            "garmin_baseline_avg": None,
         }
 
         # Get 28 days of HRV data
         start_28d = end_date - timedelta(days=27)
         cursor.execute(
             """
-            SELECT date, hrv_value, weekly_avg, last_night_avg, hrv_status
+            SELECT date, hrv_value, weekly_avg, last_night_avg, hrv_status,
+                   baseline_low, baseline_high, baseline_avg
             FROM hrv_daily
             WHERE date >= ? AND date <= ? AND hrv_value IS NOT NULL
             ORDER BY date DESC
@@ -432,6 +439,14 @@ class DataAggregator:
         most_recent = rows[0]
         result["last_night"] = most_recent["last_night_avg"] or most_recent["hrv_value"]
         result["status"] = most_recent["hrv_status"]
+
+        # Garmin's own HRV Status baseline (their proprietary long-term calc).
+        # Surfaced side-by-side so the user can compare our Plews/Buchheit
+        # computation against Garmin's assessment.
+        result["garmin_weekly_avg"] = most_recent["weekly_avg"]
+        result["garmin_baseline_low"] = most_recent["baseline_low"]
+        result["garmin_baseline_high"] = most_recent["baseline_high"]
+        result["garmin_baseline_avg"] = most_recent["baseline_avg"]
 
         # Personalized variability: coefficient of variation of daily HRV and
         # the smallest worthwhile change (~0.5 x CV; Hopkins/Plews). Lets us ask
