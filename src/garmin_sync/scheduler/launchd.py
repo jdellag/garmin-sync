@@ -55,20 +55,36 @@ def generate_plist(
 
     Includes catch-up logic: if the Mac was asleep during the scheduled
     time, the job will run when the Mac wakes up (via StartInterval backup).
-    The command checks if today's analysis already exists to avoid duplicates.
+    The command checks if today's analysis already exists to avoid duplicates,
+    AND refuses to generate before the scheduled morning hour so a post-midnight
+    catch-up poll can't lock in a report built from incomplete overnight data.
     """
     reports_dir_q = shlex.quote(str(default_data_dir() / "reports"))
     gs_q = shlex.quote(garmin_sync_path)
 
-    # Build command with idempotency check:
-    # 1. Check if today's analysis already exists - if so, skip
-    # 2. Run sync and analyze
-    # 3. Show notification and open report
-    # This allows both scheduled runs AND catch-up runs without duplication
+    # Build command with two guards, then sync + analyze:
+    #   1. If today's analysis already exists -> skip (idempotent across the 2h
+    #      catch-up polls so we don't regenerate/duplicate).
+    #   2. If it's before today's scheduled hour -> skip. The StartInterval
+    #      backup polls every 2h; without this floor it fires just after midnight
+    #      (e.g. 00:36) and builds "today's" report from a few minutes of
+    #      post-midnight data — locking in a bogus morning Body Battery / sleep /
+    #      HRV before the overnight numbers exist, which then blocks the real
+    #      08:30 run via guard #1. Floor is per-day (weekday vs weekend) so it
+    #      matches the configured schedule exactly.
+    #   3. Run sync + analyze, surface anomalies, open the report.
+    # $((10#...)) forces base-10 so a zero-padded hour like 08/09 doesn't trip
+    # bash's octal parsing. date +%u gives 1-7 (Mon=1 .. Sun=7).
     command = (
         f'REPORT={reports_dir_q}/analysis-$(date +%Y-%m-%d).md; '
         f'if [ -f "$REPORT" ]; then '
         f'echo "$(date): Analysis already exists for today, skipping."; '
+        f'exit 0; '
+        f'fi; '
+        f'HOUR=$((10#$(date +%H))); DOW=$(date +%u); '
+        f'if [ "$DOW" -le 5 ]; then FLOOR={weekday_hour}; else FLOOR={weekend_hour}; fi; '
+        f'if [ "$HOUR" -lt "$FLOOR" ]; then '
+        f'echo "$(date): Before ${{FLOOR}}:00 - overnight data incomplete, skipping until the scheduled run."; '
         f'exit 0; '
         f'fi; '
         f'echo "$(date): Starting daily sync..."; '

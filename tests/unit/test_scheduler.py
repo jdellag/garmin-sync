@@ -81,6 +81,42 @@ class TestLaunchdModule:
         for interval in weekend_intervals:
             assert interval["Hour"] == 9
 
+    def test_generate_plist_guards_against_post_midnight_run(self, tmp_path):
+        """The 2h catch-up poll must not generate a report before the morning.
+
+        Regression: a 00:36 backup run synced "today" with only ~36 min of
+        post-midnight data (Body Battery max 45 instead of the real overnight
+        peak) and the idempotency guard then blocked the real 08:30 run.
+        """
+        log_dir = tmp_path / "logs"
+        plist = launchd.generate_plist(
+            "/usr/local/bin/garmin-sync", log_dir, weekday_hour=8, weekend_hour=10
+        )
+        command = plist["ProgramArguments"][2]
+
+        # Base-10 hour parse so a zero-padded 08/09 doesn't trip octal parsing.
+        assert "10#$(date +%H)" in command
+        # Per-day floor: weekday vs weekend, matching the configured schedule.
+        assert "date +%u" in command
+        assert "-le 5" in command
+        assert "FLOOR=8" in command
+        assert "FLOOR=10" in command
+        assert '"$HOUR" -lt "$FLOOR"' in command
+        # Idempotency guard still present (skip if today's report exists).
+        assert "Analysis already exists" in command
+
+    def test_generate_plist_floor_tracks_custom_hours(self, tmp_path):
+        """The pre-morning floor follows custom weekday/weekend hours."""
+        plist = launchd.generate_plist(
+            "/usr/local/bin/garmin-sync",
+            tmp_path / "logs",
+            weekday_hour=6,
+            weekend_hour=9,
+        )
+        command = plist["ProgramArguments"][2]
+        assert "FLOOR=6" in command
+        assert "FLOOR=9" in command
+
     @patch("garmin_sync.scheduler.launchd.subprocess.run")
     @patch("garmin_sync.scheduler.launchd.shutil.which")
     @patch("garmin_sync.scheduler.launchd.get_plist_path")
