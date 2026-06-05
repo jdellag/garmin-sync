@@ -86,7 +86,8 @@ HEVY workout data (titles, exercise names) comes from user-controlled or shared 
 
 ## Reporting Vulnerabilities
 
-If you discover a security vulnerability, please email **https://github.com/jdellag/garmin-sync/issues** with:
+If you discover a security vulnerability, please report it privately via
+[GitHub Security Advisories](https://github.com/jdellag/garmin-sync/security/advisories/new) with:
 
 - Description of the vulnerability
 - Steps to reproduce
