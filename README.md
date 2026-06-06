@@ -75,6 +75,10 @@ pytest --cov=garmin_sync         # With coverage
 ruff check src/                  # Lint
 ```
 
+## Disclaimer
+
+This software is for **informational and educational purposes only**. It is not medical advice and should not be used as a substitute for professional medical guidance, diagnosis, or treatment. Always consult a qualified healthcare provider before making decisions about your health or training.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE) — free to use, modify, and distribute, including commercially.
