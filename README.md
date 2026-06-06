@@ -77,9 +77,9 @@ ruff check src/                  # Lint
 
 ## License
 
-Copyright (c) 2026 James Della-Giustina. All rights reserved. See [LICENSE](LICENSE) for details.
+This project is licensed under the [MIT License](LICENSE) — free to use, modify, and distribute, including commercially.
 
-This is proprietary software. Redistribution or commercial use requires written permission from the author.
+Copyright (c) 2026 James Della-Giustina.
 
 ## Acknowledgments
 
