@@ -341,6 +341,12 @@ class ChatSession:
         base_message = COACH_SYSTEM_MESSAGE_WITH_TOOLS if self._use_tools else COACH_SYSTEM_MESSAGE
         parts = [base_message]
 
+        # Add current date so the model doesn't have to guess
+        now_local = datetime.now(EAST_COAST_TZ)
+        parts.append(
+            f"\n\nCurrent date: {now_local.strftime('%A, %B %d, %Y')}."
+        )
+
         # Get today's activities for template substitution
         completed_today = self._get_today_activities_summary()
 
