@@ -120,6 +120,66 @@ class TestPromptBuilder:
         assert "My Typical Weekly Schedule" not in prompt
         assert "Additional Context" not in prompt
 
+    def test_build_analysis_prompt_verdicts_and_yesterday(self):
+        """Recent verdicts render one line each; yesterday's analysis is truncated."""
+        prompt = build_analysis_prompt(
+            baseline_30d={},
+            detailed_7d={},
+            current_date=date(2026, 1, 25),
+            user_schedule="",
+            user_context="",
+            yesterday_analysis="Y" * 4000,
+            recent_verdicts=[
+                "2026-01-23 (Fri): Yellow - easy only",
+                "2026-01-24 (Sat): Green - long run",
+            ],
+        )
+
+        assert "## Recent Daily Verdicts" in prompt
+        assert "- 2026-01-23 (Fri): Yellow - easy only" in prompt
+        assert "- 2026-01-24 (Sat): Green - long run" in prompt
+        assert "## Yesterday's Analysis" in prompt
+        assert "...[truncated]" in prompt
+        assert "Y" * 3000 in prompt
+        assert "Y" * 3001 not in prompt
+
+    def test_build_analysis_prompt_three_section_instructions(self):
+        """New instruction set: three sections, decisive rules, no filler mandates."""
+        prompt = build_analysis_prompt(
+            baseline_30d={},
+            detailed_7d={},
+            current_date=date(2026, 1, 25),
+            user_schedule="",
+            user_context="",
+        )
+
+        assert "Today's call" in prompt
+        assert "Week ahead" in prompt
+        assert "Be decisive" in prompt
+        # Optional sections don't render when absent
+        assert "## Recent Daily Verdicts" not in prompt
+        assert "## Yesterday's Analysis" not in prompt
+        # Old seven-section skeleton is gone
+        assert "Personal Records" not in prompt
+        assert "injury" not in prompt.lower() or "not an injury predictor" in prompt
+
+    def test_build_analysis_prompt_anomalies_render(self):
+        """Anomalies (the single alert system) render with severity tags."""
+        prompt = build_analysis_prompt(
+            baseline_30d={},
+            detailed_7d={
+                "anomalies": [
+                    {"severity": "warning", "message": "HRV trend is down"},
+                ],
+            },
+            current_date=date(2026, 1, 25),
+            user_schedule="",
+            user_context="",
+        )
+
+        assert "## Health & Training Alerts" in prompt
+        assert "**[WARNING]** HRV trend is down" in prompt
+
     def test_generate_baseline_summary(self):
         """Test baseline summary generation."""
         weekly_json = {
@@ -210,7 +270,8 @@ class TestPromptBuilder:
         assert detailed["training_load"]["acute_7d"] == 165.0
         assert detailed["body_battery"]["avg_morning_high"] == 85
         assert len(detailed["top_activities"]) == 1
-        assert len(detailed["alerts"]) == 1
+        # Legacy alerts layer removed — anomalies are the single alert system
+        assert "alerts" not in detailed
 
 
 class TestOpenAIClient:

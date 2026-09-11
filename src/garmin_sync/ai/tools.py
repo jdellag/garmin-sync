@@ -46,7 +46,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_training_load_analysis",
-            "description": "Analyze training load for injury prevention and periodization. Returns acute (7-day) and chronic (28-day) load, acute:chronic ratio with risk assessment (<0.8 detraining, 0.8-1.3 optimal, >1.5 high risk), and breakdown by activity type.",
+            "description": "Analyze the training-load trend. Returns acute (7-day) load, chronic baseline (prior 3 weeks, uncoupled), their ratio as a descriptive load-ramp signal (<0.8 reduced, 0.8-1.3 steady, 1.3-1.5 building, >1.5 rapid increase — not an injury predictor), week-over-week change, cardio/strength breakdown, and training-effect balance.",
             "parameters": {
                 "type": "object",
                 "properties": {},
