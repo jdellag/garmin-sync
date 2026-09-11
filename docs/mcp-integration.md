@@ -21,7 +21,7 @@ All 12 tools are available in both MCP (Claude Desktop) and OpenAI chat. They sh
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `get_recent_activities` | Activities with duration, HR, training load, HR drift, cadence, VO2 max | `days` (default 7), `activity_type`, `limit` (default 20) |
+| `get_recent_activities` | Activities with duration, HR, training load, HR drift, cadence, VO2 max, max speed (best pace for runs) | `days` (default 7), `activity_type`, `limit` (default 20) |
 | `get_recovery_status` | HRV, sleep, body battery, RHR, training readiness, anomalies, stress-recovery, sleep-performance | None |
 | `get_training_load_analysis` | Combined cardio+strength A:C ratio, cardio/strength load breakdown, risk assessment | None |
 | `get_cardio_performance` | Running cadence, VO2 max progression, elevation, training effect, pacing | `days` (default 28) |

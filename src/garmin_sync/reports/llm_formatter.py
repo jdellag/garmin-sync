@@ -1021,6 +1021,11 @@ class LLMReportFormatter:
                 "type": activity.get("activity_type"),
                 "duration_sec": activity.get("duration_seconds"),
                 "distance_m": activity.get("distance_meters"),
+                "max_speed_kmh": (
+                    round(activity["max_speed_mps"] * 3.6, 1)
+                    if activity.get("max_speed_mps")
+                    else None
+                ),
                 "avg_hr": activity.get("average_hr"),
                 "training_load": activity.get("training_load"),
                 "hr_drift": activity.get("hr_drift"),

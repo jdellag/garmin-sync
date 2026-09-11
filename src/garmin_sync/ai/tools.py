@@ -7,7 +7,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_recent_activities",
-            "description": "Get recent Garmin activities with metrics including duration, distance, heart rate, training load, HR drift, and per-km pace splits (with pacing consistency CoV and negative-split detection). Use this to see what workouts have been done recently.",
+            "description": "Get recent Garmin activities with metrics including duration, distance, heart rate, training load, HR drift, max speed (with best instantaneous pace for runs), and per-km pace splits (with pacing consistency CoV and negative-split detection). Use this to see what workouts have been done recently.",
             "parameters": {
                 "type": "object",
                 "properties": {

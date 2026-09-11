@@ -181,6 +181,7 @@ class TestToolExecutor:
             average_hr=145,
             max_hr=165,
             training_load=75.5,
+            max_speed_mps=4.13,
         )
         mock_repo.get_activities.return_value = [mock_activity]
 
@@ -192,6 +193,9 @@ class TestToolExecutor:
         assert result[0]["type"] == "running"
         # Should have calculated pace for running
         assert "pace_min_per_km" in result[0]
+        # Max speed exposed as km/h and best pace (min/km) for runs
+        assert result[0]["max_speed_kmh"] == pytest.approx(14.9, abs=0.05)
+        assert result[0]["best_pace_min_per_km"] == pytest.approx(4.04, abs=0.01)
 
     def test_get_recovery_status(self, executor):
         """Test get_recovery_status aggregates metrics."""
