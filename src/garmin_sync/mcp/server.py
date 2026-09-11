@@ -134,8 +134,8 @@ def get_recovery_status() -> dict:
 
     Returns HRV (baseline, delta, status), sleep (hours, score, all-day
     respiration rate and SpO2), body battery (recovery), resting HR
-    (trend), training readiness, stress-recovery patterns, and
-    sleep-performance correlation.
+    (trend), training readiness, and any detected health/training
+    anomalies.
     """
     return _get_executor().get_recovery_status()
 
@@ -158,17 +158,22 @@ def get_training_load_analysis() -> dict:
 
 @mcp.tool()
 @mcp_error_handler
-def get_strength_training_summary(days: int = 7) -> dict:
+def get_strength_training_summary(days: int = 7, include_sets: bool = False) -> dict:
     """Get HEVY strength training summary. Requires HEVY integration.
 
     Args:
         days: Days to analyze (default: 7)
+        include_sets: Include per-workout set-by-set breakdown
+            (e.g. "135x10, 155x8") under ``workouts_detail``
 
-    Returns sessions, total volume (lbs), sets by muscle group,
-    recent workouts with exercise details, RPE averages with
-    overreaching detection, RPE-adjusted volume, and personal records.
+    Returns sessions, total volume (lbs), sets by muscle group
+    (actual/target), recent workouts with exercise details, RPE averages
+    with overreaching detection, and personal records.
     """
-    return _get_executor().get_strength_training_summary(days=days)
+    return _get_executor().get_strength_training_summary(
+        days=days,
+        include_sets=include_sets,
+    )
 
 
 @mcp.tool()
@@ -187,19 +192,6 @@ def get_exercise_progression(exercise_name: str, days: int = 90) -> dict:
         exercise_name=exercise_name,
         days=days,
     )
-
-
-@mcp.tool()
-@mcp_error_handler
-def get_workout_details(days: int = 7) -> list[dict]:
-    """Get detailed HEVY workouts with exercise and set breakdown. Requires HEVY integration.
-
-    Args:
-        days: Days to look back (default: 7)
-
-    Returns list of workouts with exercises and sets (e.g., "135x10, 155x8").
-    """
-    return _get_executor().get_workout_details(days=days)
 
 
 @mcp.tool()
@@ -244,42 +236,18 @@ def get_longitudinal_summary(
 @mcp_error_handler
 def get_cardio_performance(days: int = 28) -> dict:
     """Get cardio performance metrics: running cadence trends, VO2 max
-    progression, elevation summary, pacing consistency (CoV,
-    negative-split percentage), and training effect balance.
+    progression, elevation summary, and pacing consistency (CoV,
+    negative-split percentage). Training-effect balance comes from
+    get_training_load_analysis.
 
     Args:
         days: Number of days to analyze (default: 28)
 
     Returns:
-        Dict with cadence, vo2_max, elevation, pacing, and training_effect sections.
+        Dict with cadence, vo2_max, and elevation sections (plus pacing
+        when split data exists).
     """
     return _get_executor().get_cardio_performance(days=days)
-
-
-@mcp.tool()
-@mcp_error_handler
-def get_anomaly_report() -> dict:
-    """Scan recent health and training data for anomalies.
-
-    Checks HRV crashes, RHR spikes, training overload/detraining, sleep
-    degradation, body battery depletion, stress-recovery imbalance,
-    overreaching, and SpO2 concerns.  Returns anomalies sorted by
-    severity (critical first) with summary counts.
-    """
-    return _get_executor().get_anomaly_report()
-
-
-@mcp.tool()
-@mcp_error_handler
-def get_periodization_status() -> dict:
-    """Get current training phase, readiness score, and deload recommendation.
-
-    Returns training phase (recovery / base / build / peak / overload),
-    composite readiness score (0-100 with green/yellow/red signal from
-    HRV, sleep, body battery, RHR, and A:C ratio), and whether a deload
-    week is recommended.
-    """
-    return _get_executor().get_periodization_status()
 
 
 @mcp.tool()

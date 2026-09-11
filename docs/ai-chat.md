@@ -76,17 +76,6 @@ Scans for 10 health and training anomalies:
 
 Results are sorted by severity (critical, warning, info).
 
-## Periodization analysis
-
-```bash
-garmin-sync analyze periodization
-```
-
-Analyzes your current training phase:
-- **Phase detection:** Recovery, maintenance, building, peaking, or overreaching
-- **Readiness score:** 0-100 composite with traffic-light signal (includes strength fatigue when HEVY data is available)
-- **Deload recommendation:** Whether a deload week is advised
-
 ## Computed analytics
 
 The following metrics are computed from your data and available through tools and reports:
@@ -94,10 +83,9 @@ The following metrics are computed from your data and available through tools an
 | Category | Metrics |
 |----------|---------|
 | **Recovery** | HRV context (7d/28d baselines, delta), sleep consistency (bedtime variance, REM/deep %), body battery (overnight recovery, weekday/weekend), RHR trend, training readiness |
-| **Training Load** | Combined cardio + strength load (EPOC + sRPE), acute (7d) / chronic (28d), A:C ratio with risk assessment, cardio/strength breakdown, load by sport, training effect balance |
-| **Cardio** | Running cadence trends, VO2 max progression, elevation summary, HR drift, pacing analysis (CoV, negative splits) |
+| **Training Load** | Combined cardio + strength load (EPOC + sRPE), acute (7d) vs chronic baseline, A:C ratio as a descriptive load-ramp label, cardio/strength breakdown, load by sport, training effect balance |
+| **Cardio** | Running cadence trends, VO2 max progression, elevation summary, HR drift, max speed / best pace, pacing analysis (CoV, negative splits) |
 | **Strength** | Volume by muscle group (actual/target sets), exercise progression (est. 1RM via Epley), RPE analysis, overreaching detection, PR surfacing |
-| **Correlations** | Stress-recovery patterns, sleep-performance grading (A-F scale with next-day impact) |
 | **Comparisons** | Weekly and monthly comparison, month-to-date, personal records |
 | **Longitudinal** | Aerobic efficiency by period, yearly health baselines, volume trends, HR drift by year |
 | **Respiratory** | Sleep respiration rate, SpO2 averages, all-day respiration/SpO2 |

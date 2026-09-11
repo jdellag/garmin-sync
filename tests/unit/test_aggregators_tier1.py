@@ -538,7 +538,8 @@ class TestCardioPerformanceTool:
         assert "cadence" in result
         assert "vo2_max" in result
         assert "elevation" in result
-        assert "training_effect" in result
+        # training_effect is owned by get_training_load_analysis now
+        assert "training_effect" not in result
 
     def test_cadence_section(self, repo, agg):
         from garmin_sync.tools.executor import ToolExecutor

@@ -63,7 +63,6 @@ class AnomalyDetector:
             self._check_training_detraining,
             self._check_sleep_degradation,
             self._check_body_battery_depleted,
-            self._check_stress_recovery,
             self._check_overreaching,
             self._check_spo2_concern,
             self._check_strength_overload,
@@ -310,32 +309,6 @@ class AnomalyDetector:
                     "data": {
                         "depleted_days": max_streak,
                         "avg_morning_high": avg_mh,
-                    },
-                }
-            ]
-
-        return []
-
-    def _check_stress_recovery(self, end_date: date) -> list[dict]:
-        """Flag a warning when high-stress/poor-recovery days accumulate."""
-        start = end_date - timedelta(days=6)
-        corr = self.agg.get_stress_recovery_correlation(start, end_date)
-
-        bad_days = corr.get("high_stress_poor_recovery_days", 0)
-        if bad_days >= 3:
-            return [
-                {
-                    "check": "stress_recovery",
-                    "severity": "warning",
-                    "message": (
-                        f"{bad_days} high-stress / poor-recovery days in "
-                        f"the past week"
-                    ),
-                    "data": {
-                        "high_stress_poor_recovery_days": bad_days,
-                        "avg_stress_training_days": corr.get(
-                            "avg_stress_training_days"
-                        ),
                     },
                 }
             ]

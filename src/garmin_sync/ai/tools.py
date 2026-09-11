@@ -34,7 +34,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_recovery_status",
-            "description": "Get current recovery metrics for training decisions. Returns HRV (baseline, delta, status), sleep quality (with all-day respiration rate and SpO2), body battery recovery, resting HR trend, training readiness score, stress-recovery correlation patterns, and sleep-performance correlation.",
+            "description": "Get current recovery metrics for training decisions. Returns HRV (baseline, delta, status), sleep quality (with all-day respiration rate and SpO2), body battery recovery, resting HR trend, training readiness score, and any detected health/training anomalies.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -58,7 +58,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_strength_training_summary",
-            "description": "Get HEVY strength training summary including total sessions, volume in pounds, sets by muscle group, recent workouts with exercise details, RPE averages with overreaching detection, RPE-adjusted volume metrics, and HEVY-flagged personal records. Requires HEVY integration to be configured.",
+            "description": "Get HEVY strength training summary including total sessions, volume in pounds, sets by muscle group (actual/target), recent workouts with exercise details, RPE averages with overreaching detection, and HEVY-flagged personal records. Set include_sets=true for set-by-set detail (e.g. '135x10, 155x8') when asked exactly what was lifted. Requires HEVY integration to be configured.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -66,6 +66,11 @@ TOOLS = [
                         "type": "integer",
                         "description": "Days to analyze (default: 7)",
                         "default": 7,
+                    },
+                    "include_sets": {
+                        "type": "boolean",
+                        "description": "Include per-workout set-by-set breakdown (default: false)",
+                        "default": False,
                     },
                 },
                 "required": [],
@@ -91,24 +96,6 @@ TOOLS = [
                     },
                 },
                 "required": ["exercise_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_workout_details",
-            "description": "Get detailed HEVY workout data with exercise names, muscle groups, and sets in compact format (e.g., '135x10, 155x8'). Requires HEVY integration. Use this to see exactly what exercises and weights were used.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "days": {
-                        "type": "integer",
-                        "description": "Days to look back (default: 7)",
-                        "default": 7,
-                    },
-                },
-                "required": [],
             },
         },
     },
@@ -155,7 +142,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_cardio_performance",
-            "description": "Get cardio performance metrics: running cadence trends, VO2 max progression, elevation summary, pacing consistency (CoV, negative-split percentage), and aerobic/anaerobic training effect balance. Use when the user asks about running form, pacing, cadence, VO2 max, elevation, or training effect.",
+            "description": "Get cardio performance metrics: running cadence trends, VO2 max progression, elevation summary, and pacing consistency (CoV, negative-split percentage). Use when the user asks about running form, pacing, cadence, VO2 max, or elevation. Training-effect balance comes from get_training_load_analysis.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -165,30 +152,6 @@ TOOLS = [
                         "default": 28,
                     },
                 },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_anomaly_report",
-            "description": "Scan recent health and training data for anomalies. Checks HRV crashes, RHR spikes, training overload/detraining, sleep degradation, body battery depletion, stress-recovery imbalance, overreaching, and SpO2 concerns. Returns anomalies sorted by severity (critical first).",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_periodization_status",
-            "description": "Get current training phase (recovery/base/build/peak/overload), composite readiness score (0-100 with green/yellow/red signal from HRV, sleep, body battery, RHR, and A:C ratio), and deload recommendation. Use when the user asks about training phase, readiness to train, or whether they need a deload week.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
                 "required": [],
             },
         },

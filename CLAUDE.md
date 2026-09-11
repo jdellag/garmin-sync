@@ -6,7 +6,7 @@ Python CLI that syncs Garmin Connect and HEVY fitness data to SQLite, with AI co
 
 ```
 src/garmin_sync/
-├── cli.py                  # Typer CLI (25 commands across 8 groups + setup wizard; --verbose, --dry-run)
+├── cli.py                  # Typer CLI (33 commands across 9 groups + setup wizard; --verbose, --dry-run)
 ├── config/
 │   ├── paths.py            # Platform-aware path defaults (platformdirs)
 │   └── settings.py         # Pydantic Settings (env var config; data_dir + config_dir, expanduser'd)
@@ -26,23 +26,22 @@ src/garmin_sync/
 │   ├── models.py           # HevyWorkout, HevyExercise, HevySet dataclasses (+ training_load, stl_method)
 │   └── sync.py             # HEVY sync manager (computes STL at sync time)
 ├── tools/                  # Shared tool executor (used by MCP + OpenAI)
-│   └── executor.py         # ToolExecutor class - 12 fitness data tools (sanitizes HEVY text in output)
+│   └── executor.py         # ToolExecutor class - 9 fitness data tools (sanitizes HEVY text in output)
 ├── mcp/                    # Model Context Protocol server
 │   └── server.py           # FastMCP server with tool definitions
 ├── ai/                     # OpenAI integration
 │   ├── config.py           # TOML config (API key, model, use_tools, StrengthConfig); atomic 0o600 write
 │   ├── chat.py             # ChatSession - interactive coach with tool calling
-│   ├── tools.py            # OpenAI function schemas for 12 tools
+│   ├── tools.py            # OpenAI function schemas for 9 tools
 │   ├── openai_client.py    # API wrapper (chat_with_tools, chat_with_history); sanitizes tool errors; per-call tool limit guard
-│   └── prompt_builder.py   # Daily + longitudinal prompts; safe_user_string for HEVY data; actual/target muscle group rendering
+│   └── prompt_builder.py   # Daily + longitudinal prompts; verdict-list continuity (no echo chamber); safe_user_string for HEVY data
 ├── scheduler/
 │   ├── __init__.py         # get_scheduler() factory — dispatches per platform
 │   ├── launchd.py          # macOS launchd plist management
 │   └── windows_task.py     # Windows Task Scheduler via schtasks.exe
 └── reports/
-    ├── aggregators.py      # SQL aggregation queries (30 public methods; UNION ALL cardio+strength load)
-    ├── anomaly_detector.py # AnomalyDetector: 10 health/training anomaly checks (incl. strength overload)
-    ├── periodization.py    # PeriodizationAnalyzer: phase detection, readiness (6-component w/ HEVY), deload
+    ├── aggregators.py      # SQL aggregation queries (UNION ALL cardio+strength load)
+    ├── anomaly_detector.py # AnomalyDetector: 9 health/training anomaly checks (the ONLY alert layer)
     ├── strength_load.py    # STL calculator: sRPE-based strength training load (hybrid RPE/estimation)
     ├── llm_formatter.py    # Markdown report formatting
     └── report_generator.py # Report coordination & export
@@ -118,7 +117,7 @@ pytest tests/unit/test_mcp.py        # MCP tests
 pytest --cov=garmin_sync             # With coverage
 ```
 
-**746 tests** covering all modules.
+**690 tests** covering all modules.
 
 ## Gotchas
 
@@ -145,13 +144,14 @@ pytest --cov=garmin_sync             # With coverage
 21. **MCP structured errors**: MCP tools return structured error responses with `error_type` classification (DATA_MISSING, SYNC_NEEDED, AUTH_FAILED, INTERNAL) and `suggestion` fields. The `_mcp_error_handler` decorator in `mcp/server.py` wraps all tool functions.
 22. **Schedule status enrichment**: `schedule status` on macOS shows next scheduled run time, last exit code, and sync age via `launchctl print` parsing. The `_try_parse_date()` helper handles timezone abbreviation differences across platforms.
 23. **Module-level logging**: All modules use `logging.getLogger(__name__)`. The `--verbose`/`-V` CLI flag sets the root logger to DEBUG.
-24. **Strength Training Load (STL)**: `reports/strength_load.py` computes per-workout load via sRPE method (session RPE × duration). Falls back to estimation heuristics when RPE not logged. Stored as `training_load` + `stl_method` on `hevy_workouts`. UNION ALL'd with Garmin's EPOC-based load in `get_training_load_trend()` and `get_weekly_load_history()` for combined A:C ratio. Science note: mixing EPOC with sRPE is approximate — always surface the cardio/strength breakdown alongside headline totals.
+24. **Strength Training Load (STL)**: `reports/strength_load.py` computes per-workout load via sRPE method (session RPE × duration). Falls back to estimation heuristics when RPE not logged. Stored as `training_load` + `stl_method` on `hevy_workouts`. UNION ALL'd with Garmin's EPOC-based load in `get_training_load_trend()` for the combined A:C ratio. Science note: mixing EPOC with sRPE is approximate — always surface the cardio/strength breakdown alongside headline totals.
 25. **STL backfill**: Existing HEVY workouts need `garmin-sync hevy recalc-stl` to populate `training_load`. New syncs compute STL automatically. Same pattern as `fit-reparse` for FIT files.
-26. **Readiness score redistribution**: When HEVY data exists, readiness scoring uses 6 components (HRV 20, Sleep 20, BB 20, RHR 15, A:C 15, Strength Fatigue 10). Without HEVY, original 5-component weights are used (HRV 25, Sleep 20, BB 20, RHR 15, A:C 20). The conditional is in `calculate_readiness_score()`.
+26. **One alert layer, one readiness number (2026-09 de-bloat)**: `AnomalyDetector` is the ONLY alert system — the legacy `_generate_alerts` (llm_formatter), the `PeriodizationAnalyzer` (phase detection + custom readiness score + deload), and the stress-recovery/sleep-performance correlation aggregators were deliberately DELETED (they triple-counted signals, contradicted the A:C reframing, and drowned the coach prompt). "Readiness" now always means Garmin's own Training Readiness score. `get_recovery_status` embeds anomalies; there is no separate anomaly/periodization tool. Don't reintroduce a second interpretation layer — add new checks to `anomaly_detector.py` instead.
 27. **Rate limiter uses `time.monotonic()`**: `api/rate_limiter.py` is a sliding-window limiter that loops (`while`, not `if`) with inclusive (`<=`) eviction so it keeps limiting after the first throttle. It uses `time.monotonic()`, so **tests must mock `time.monotonic`, not `time.time`** (mocking the wrong one makes a test busy-loop in real time). `_api_call` in `api/client.py` acquires a token per retry attempt.
 28. **A:C ratio is UNCOUPLED and reframed (not injury prediction)**: `get_training_load_trend()` computes `acute_chronic_ratio` = acute(7d) ÷ `chronic_baseline_weekly` (= load in days 8–28 ÷ 3), deliberately EXCLUDING the acute window so the ratio isn't mathematically coupled (Lolli 2019). It's surfaced as a descriptive **load-ramp** label (`load_ramp`: reduced/steady/building/rapid_increase), NOT injury risk (the ACWR "sweet spot" is unsupported — Impellizzeri 2020). The overload anomaly is **warning** (cardio) / **info** (strength), not critical, and only fires when `chronic_baseline_load > 0`. Mock dicts feeding these checks need `chronic_baseline_load` (+ `chronic_baseline_weekly` for messages).
 29. **HEVY pagination + parsing**: `hevy/client.py` `get_all_workouts` does NOT stop on a missing `start_time` (would truncate the sync) and treats an absent `page_count` as "a full page implies more". Requests have a `(5, 30)` timeout. `models.py` tolerates `"sets"/"exercises": null` and coerces string-typed `weight_kg`/`reps`.
 30. **`has_tokens()` requires non-empty files**: `auth/garmin_auth.py` checks token files exist AND are non-empty (garth writes 0-byte files on a partial login). `login()` passes an MFA prompt to garth so 2FA accounts can authenticate, and clears the password after the token dump.
 31. **`GARMIN_SYNC_CONFIG_DIR`**: `config_dir` is a separate Settings field (default `default_config_dir()`) — `ai_config_path`/`profile_path` derive from it, so config can be relocated independently of `GARMIN_SYNC_DATA_DIR`. Path env vars are `expanduser()`'d. `paths.py` passes `appauthor=False` to platformdirs (avoids doubled `…\garmin-sync\garmin-sync` on Windows).
 32. **HRV is smoothed + personalized**: `get_hrv_context()` sets `delta_from_baseline` from the **7-day rolling mean vs the 28d baseline** (not a single night), and computes `cv_pct` (coefficient of variation of daily HRV) + `swc_pct` (≈0.5×CV, smallest worthwhile change) when ≥7 days exist. `_score_hrv` ramps from −SWC (full) to −2×CV (zero); `_check_hrv_crash` fires when the smoothed delta drops below −1×CV — both fall back to a fixed −20%/−15% when CV is unavailable (Plews & Buchheit). Mocks feeding these need `cv_pct`/`swc_pct` to exercise the personalized path.
-33. **launchd report must not run before morning**: the daily job (`scheduler/launchd.py` `generate_plist`) keys the report to *today* and syncs `--days 1`, but `StartInterval` polls every 2h for catch-up. Without a floor, the **first poll after midnight (~00:36) generates today's report from a few minutes of post-midnight data** — a partial-day `body_battery_daily` row (e.g. `max_level=45` instead of the real overnight peak ~90), wrong sleep/HRV — and the idempotency guard (`if [ -f "$REPORT" ]`) then **blocks the real 08:30 run**. Fix: the command floors generation at the per-day scheduled hour (`DOW=$(date +%u)`; weekday→`weekday_hour`, weekend→`weekend_hour`; `HOUR=$((10#$(date +%H)))` forces base-10 so `08`/`09` don't trip octal parsing). Catch-up still works (a poll ≥ floor with no report yet generates it). The fix only reaches the live agent after `schedule install` rewrites the plist. Windows (`windows_task.py`) fires at exact times via `schtasks`, no poll, so it's unaffected.
+33. **Daily-prompt continuity contract**: `_run_analysis` (cli.py) feeds the model a one-line verdict list from the last 7 reports plus yesterday's analysis only. `_extract_verdict` matches the `Today: <call>` line (the instructions mandate it as the report's first line) — keep that output contract or verdict extraction goes blind. Never reintroduce multiple full previous analyses into the prompt: that was the echo-chamber regression that degraded coaching quality (the model anchored on a week of its own cautious headlines).
+34. **launchd report must not run before morning**: the daily job (`scheduler/launchd.py` `generate_plist`) keys the report to *today* and syncs `--days 1`, but `StartInterval` polls every 2h for catch-up. Without a floor, the **first poll after midnight (~00:36) generates today's report from a few minutes of post-midnight data** — a partial-day `body_battery_daily` row (e.g. `max_level=45` instead of the real overnight peak ~90), wrong sleep/HRV — and the idempotency guard (`if [ -f "$REPORT" ]`) then **blocks the real 08:30 run**. Fix: the command floors generation at the per-day scheduled hour (`DOW=$(date +%u)`; weekday→`weekday_hour`, weekend→`weekend_hour`; `HOUR=$((10#$(date +%H)))` forces base-10 so `08`/`09` don't trip octal parsing). Catch-up still works (a poll ≥ floor with no report yet generates it). The fix only reaches the live agent after `schedule install` rewrites the plist. Windows (`windows_task.py`) fires at exact times via `schtasks`, no poll, so it's unaffected.

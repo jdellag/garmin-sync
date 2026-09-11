@@ -72,7 +72,7 @@ garmin-sync computes a Strength Training Load per HEVY workout using the sRPE me
 **How it works:**
 - When you log RPE in HEVY (50%+ of sets), the system uses your actual RPE data, volume-weighted by each set's weight x reps
 - When RPE isn't logged, it estimates session intensity from workout characteristics (PR flags, set types, volume, exercise count)
-- The computed STL is combined with Garmin's cardio training load (EPOC-based) for a unified A:C ratio, readiness score, and periodization analysis
+- The computed STL is combined with Garmin's cardio training load (EPOC-based) for a unified A:C load-ramp ratio
 
 **Checking your STL:**
 
