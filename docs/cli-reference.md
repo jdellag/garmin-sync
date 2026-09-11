@@ -88,7 +88,6 @@ From HEVY (if configured):
 | `garmin-sync analyze view` | View most recent analysis (`--date YYYY-MM-DD` for specific date) |
 | `garmin-sync analyze list` | List all analysis reports |
 | `garmin-sync analyze anomalies` | Health/training anomaly scan |
-| `garmin-sync analyze periodization` | Training phase, readiness score, deload check |
 
 **Longitudinal review:**
 
@@ -128,7 +127,6 @@ Surfaces multi-year trends (pace-at-HR, RHR/HRV/sleep baselines, weekly-volume c
 |---------|-------------|
 | `garmin-sync stats today` | Quick summary of today's activity |
 | `garmin-sync stats week` | Quick summary of this week |
-| `garmin-sync stats readiness` | One-line readiness score + training phase |
 
 ## hevy
 

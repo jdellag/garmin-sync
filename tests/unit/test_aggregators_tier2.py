@@ -1,8 +1,5 @@
-"""Tests for Tier 2 analytics — RPE, stress-recovery, sleep-performance,
-monthly reports, personal records."""
+"""Tests for Tier 2 analytics — RPE, monthly reports, personal records."""
 
-import os
-import time
 from datetime import date, timedelta
 
 import pytest
@@ -196,180 +193,6 @@ class TestOverreachingDetection:
 
 # ==================================================================
 # Feature 2: Stress-Recovery Correlation
-# ==================================================================
-
-
-class TestStressRecoveryCorrelation:
-    @pytest.fixture(autouse=True)
-    def _seed(self, repo, db):
-        today = date.today()
-        cursor = db.connection.cursor()
-
-        # Seed stress: high on days 0, 2, 4 (even); low on 1, 3, 5
-        # Seed BB: the DAY AFTER a high-stress day gets poor BB start
-        for i in range(7):
-            d = (today - timedelta(days=6 - i)).isoformat()
-            stress = 60 if i % 2 == 0 else 30
-            cursor.execute(
-                "INSERT INTO stress_daily (date, avg_stress_level, high_stress_duration) "
-                "VALUES (?, ?, ?)",
-                (d, stress, 3600 if stress > 50 else 1200),
-            )
-
-        # BB: day after high-stress days (odd indices) get low BB start
-        for i in range(7):
-            d = (today - timedelta(days=6 - i)).isoformat()
-            # Days 1, 3, 5 follow high-stress days 0, 2, 4
-            bb_start = 20 if i % 2 == 1 else 60
-            cursor.execute(
-                "INSERT INTO body_battery_daily (date, start_level, end_level, charged, drained) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (d, bb_start, 40, 30, 20),
-            )
-        db.connection.commit()
-
-        # Add training activity on day 2 and day 4
-        for i, days_ago in enumerate([4, 2]):
-            d = today - timedelta(days=days_ago)
-            repo.upsert_activity(Activity(
-                activity_id=f"act_stress_{i}",
-                activity_type="running",
-                start_time=f"{d.isoformat()}T07:00:00Z",
-                start_time_local=f"{d.isoformat()}T07:00:00",
-                duration_seconds=3600,
-                training_load=50.0,
-            ))
-
-    def test_basic_correlation(self, agg):
-        today = date.today()
-        result = agg.get_stress_recovery_correlation(
-            today - timedelta(days=6), today
-        )
-        assert result["days_analyzed"] == 7
-        assert result["avg_stress_training_days"] is not None
-        assert result["avg_stress_rest_days"] is not None
-
-    def test_high_stress_poor_recovery_detection(self, agg):
-        today = date.today()
-        result = agg.get_stress_recovery_correlation(
-            today - timedelta(days=6), today
-        )
-        # High stress days (60) should have poor BB start (<30) on next day
-        assert result["high_stress_poor_recovery_days"] > 0
-        assert len(result["patterns"]) > 0
-        assert result["patterns"][0]["pattern"] == "high_stress_poor_recovery"
-
-    def test_no_data_returns_empty(self, db):
-        """Empty tables return sensible defaults."""
-        agg = DataAggregator(db)
-        # Clear the seeded data
-        cursor = db.connection.cursor()
-        cursor.execute("DELETE FROM stress_daily")
-        db.connection.commit()
-
-        result = agg.get_stress_recovery_correlation(
-            date.today() - timedelta(days=7), date.today()
-        )
-        assert result["days_analyzed"] == 0
-        assert result["patterns"] == []
-
-
-# ==================================================================
-# Feature 3: Sleep-Performance Correlation
-# ==================================================================
-
-
-class TestSleepPerformanceCorrelation:
-    @pytest.fixture(autouse=True)
-    def _seed(self, repo, db):
-        cursor = db.connection.cursor()
-        today = date.today()
-
-        # 10 days of sleep + next-day activities
-        # Scores distributed around mean ~75, std ~10
-        scores = [90, 85, 80, 75, 75, 73, 70, 65, 60, 55]
-        for i, score in enumerate(scores):
-            sleep_date = (today - timedelta(days=10 - i)).isoformat()
-            activity_date = (today - timedelta(days=9 - i))
-
-            cursor.execute(
-                "INSERT INTO sleep_daily (date, sleep_score, avg_hrv, total_sleep_seconds) "
-                "VALUES (?, ?, ?, ?)",
-                (sleep_date, score, 50 + (score - 70), 28800),
-            )
-
-            repo.upsert_activity(Activity(
-                activity_id=f"act_sleep_{i}",
-                activity_type="running",
-                start_time=f"{activity_date.isoformat()}T07:00:00Z",
-                start_time_local=f"{activity_date.isoformat()}T07:00:00",
-                duration_seconds=3600,
-                training_load=40 + score * 0.5,
-                hr_drift=0.02 + (100 - score) * 0.001,
-                training_effect_aerobic=2.0 + score * 0.02,
-            ))
-        db.connection.commit()
-
-    def test_grade_distribution(self, agg):
-        today = date.today()
-        result = agg.get_sleep_performance_correlation(
-            today - timedelta(days=11), today
-        )
-        assert result["data_points"] == 10
-        assert result["sleep_score_stats"] is not None
-        assert "mean" in result["sleep_score_stats"]
-        assert "std" in result["sleep_score_stats"]
-        # Should have at least 2 grade buckets populated
-        assert len(result["by_sleep_grade"]) >= 2
-
-    def test_a_grade_has_higher_load(self, agg):
-        today = date.today()
-        result = agg.get_sleep_performance_correlation(
-            today - timedelta(days=11), today
-        )
-        grades = result["by_sleep_grade"]
-        # A-grade sleep (scores 85-90) should yield higher training load than lower grades
-        if "A" in grades and "F" in grades:
-            a_load = grades["A"]["avg_training_load"]
-            f_load = grades["F"]["avg_training_load"]
-            if a_load and f_load:
-                assert a_load > f_load
-
-    def test_hrv_performance_link(self, agg):
-        today = date.today()
-        result = agg.get_sleep_performance_correlation(
-            today - timedelta(days=11), today
-        )
-        # With 10 data points (> 4), HRV link should be computed
-        assert result["hrv_performance_link"] is not None
-        assert "high_hrv_avg_load" in result["hrv_performance_link"]
-        assert "low_hrv_avg_load" in result["hrv_performance_link"]
-
-    def test_no_data_returns_empty(self):
-        """Fresh DB with no sleep/activity data returns empty."""
-        fresh_db = Database(":memory:")
-        fresh_db.initialize()
-        fresh_db.migrate()
-        fresh_agg = DataAggregator(fresh_db)
-        result = fresh_agg.get_sleep_performance_correlation(
-            date.today() - timedelta(days=7), date.today()
-        )
-        assert result["data_points"] == 0
-        assert result["by_sleep_grade"] == {}
-
-    def test_insight_generated(self, agg):
-        today = date.today()
-        result = agg.get_sleep_performance_correlation(
-            today - timedelta(days=11), today
-        )
-        # Insight should be generated if A and F grades exist with >10% difference
-        if "A" in result["by_sleep_grade"] and "F" in result["by_sleep_grade"]:
-            assert result["insight"] is not None
-            assert "training load" in result["insight"]
-
-
-# ==================================================================
-# Feature 4: Monthly Reports
 # ==================================================================
 
 
@@ -719,17 +542,12 @@ class TestToolEnrichments:
         from garmin_sync.tools.executor import ToolExecutor
         return ToolExecutor(repo, agg)
 
-    def test_recovery_status_has_stress_recovery(self, executor):
+    def test_recovery_status_has_no_correlation_pseudo_signals(self, executor):
+        # Correlation features (stress-recovery, sleep-performance grades)
+        # were removed as small-n pseudo-signal
         result = executor.get_recovery_status()
-        assert "stress_recovery" in result
-        assert "stress_on_training_days" in result["stress_recovery"]
-        assert "patterns" in result["stress_recovery"]
-
-    def test_recovery_status_has_sleep_performance(self, executor):
-        result = executor.get_recovery_status()
-        assert "sleep_performance" in result
-        assert "data_points" in result["sleep_performance"]
-        assert "by_sleep_grade" in result["sleep_performance"]
+        assert "stress_recovery" not in result
+        assert "sleep_performance" not in result
 
     def test_weekly_comparison_has_month_to_date(self, executor):
         result = executor.get_weekly_comparison()
@@ -741,38 +559,6 @@ class TestToolEnrichments:
         # Real repo with no HEVY data — should return 0 sessions
         result = executor.get_strength_training_summary(days=7)
         assert result["total_sessions"] == 0
-
-
-class TestWeeklyLoadBucketing:
-    """Regression: get_weekly_load_history must bucket by distinct ISO weeks.
-
-    A prior bug used strftime('%%Y-%%W', ...). The doubled percent is a
-    literal in SQLite's strftime (not a printf-style escape), so every row
-    collapsed into a single bucket literally named '%Y-%W' — which made
-    _compute_weekly_trend always return 'insufficient_data' and
-    _count_overload_weeks always return 0 (deload could never fire).
-    """
-
-    def _seed_activity(self, db, activity_id, start_local, load):
-        cur = db.connection.cursor()
-        cur.execute(
-            "INSERT INTO activities (activity_id, start_time, start_time_local, "
-            "training_load, average_hr) VALUES (?, ?, ?, ?, ?)",
-            (activity_id, start_local, start_local, load, 140),
-        )
-        db.connection.commit()
-
-    def test_distinct_weeks_not_collapsed(self, agg, db):
-        today = date.today()
-        # Three activities, each exactly one ISO week apart.
-        for i, offset in enumerate((0, 7, 14)):
-            d = (today - timedelta(days=offset)).isoformat()
-            self._seed_activity(db, f"a{i}", f"{d}T08:00:00", 100.0 + i)
-
-        weeks = agg.get_weekly_load_history(today, weeks=6).get("weeks", [])
-
-        assert len(weeks) == 3, f"expected 3 distinct week buckets, got {len(weeks)}"
-        assert len({w["week_start"] for w in weeks}) == 3  # not fused into one
 
 
 class TestStrengthSummarySTLMatching:
@@ -886,41 +672,3 @@ class TestACOverloadBaselineGuard:
         assert len(fired) == 1
 
 
-class TestHevyWeeklyLocalBucketing:
-    """Regression: get_weekly_load_history must bucket HEVY workouts (stored in
-    UTC) by LOCAL time, matching how activities bucket by start_time_local — so
-    a late-evening lift and a same-evening cardio session land in one ISO week.
-    """
-
-    @pytest.mark.skipif(not hasattr(time, "tzset"), reason="tzset() unavailable")
-    def test_late_evening_lift_buckets_with_local_cardio(self, agg, db):
-        old_tz = os.environ.get("TZ")
-        os.environ["TZ"] = "America/New_York"
-        time.tzset()
-        try:
-            cur = db.connection.cursor()
-            # Sunday 2026-05-31, 22:00 ET. Cardio stores local wall-clock.
-            cur.execute(
-                "INSERT INTO activities (activity_id, start_time, start_time_local, "
-                "training_load, average_hr) VALUES (?, ?, ?, ?, ?)",
-                ("c1", "2026-06-01T02:00:00", "2026-05-31T22:00:00", 100.0, 140),
-            )
-            # Same instant lift; HEVY stores UTC (02:00 Mon UTC == 22:00 Sun ET).
-            cur.execute(
-                "INSERT INTO hevy_workouts (id, title, start_time, training_load, "
-                "stl_method) VALUES (?, ?, ?, ?, ?)",
-                ("h1", "Leg Day", "2026-06-01T02:00:00+00:00", 300.0, "srpe"),
-            )
-            db.connection.commit()
-
-            weeks = agg.get_weekly_load_history(date(2026, 6, 6), weeks=6)["weeks"]
-
-            assert len(weeks) == 1, "lift and cardio split into different ISO weeks"
-            assert weeks[0]["cardio_load"] == 100.0
-            assert weeks[0]["strength_load"] == 300.0
-        finally:
-            if old_tz is None:
-                os.environ.pop("TZ", None)
-            else:
-                os.environ["TZ"] = old_tz
-            time.tzset()

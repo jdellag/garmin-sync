@@ -78,13 +78,6 @@ def _healthy_body_battery():
     }
 
 
-def _healthy_stress():
-    return {
-        "high_stress_poor_recovery_days": 1,
-        "avg_stress_training_days": 35,
-    }
-
-
 def _healthy_rpe():
     return {"overreaching_flag": False, "overall_avg_rpe": 6.5}
 
@@ -100,7 +93,6 @@ def _set_all_healthy(mock_agg):
     mock_agg.get_training_load_trend.return_value = _healthy_training_load()
     mock_agg.get_sleep_score_history.return_value = _healthy_sleep_scores()
     mock_agg.get_body_battery_recovery.return_value = _healthy_body_battery()
-    mock_agg.get_stress_recovery_correlation.return_value = _healthy_stress()
     mock_agg.get_rpe_analysis.return_value = _healthy_rpe()
     mock_agg.get_allday_respiration_spo2.return_value = _healthy_spo2()
 
@@ -241,19 +233,6 @@ class TestBodyBatteryDepleted:
         assert results[0]["check"] == "body_battery_depleted"
         assert results[0]["severity"] == "warning"
         assert results[0]["data"]["depleted_days"] == 2
-
-
-class TestStressRecovery:
-    def test_triggers_on_3_or_more_bad_days(self, detector, mock_agg):
-        mock_agg.get_stress_recovery_correlation.return_value = {
-            "high_stress_poor_recovery_days": 4,
-            "avg_stress_training_days": 50,
-        }
-        results = detector._check_stress_recovery(date(2026, 5, 23))
-        assert len(results) == 1
-        assert results[0]["check"] == "stress_recovery"
-        assert results[0]["severity"] == "warning"
-        assert results[0]["data"]["high_stress_poor_recovery_days"] == 4
 
 
 class TestOverreaching:

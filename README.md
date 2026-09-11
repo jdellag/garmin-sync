@@ -8,7 +8,7 @@ A command-line tool that syncs your Garmin Connect and HEVY fitness data locally
 - **HEVY Integration** -- Strength training data with volume tracking, muscle group set targets, and exercise progression
 - **AI Fitness Coach** -- Interactive chat with tool calling for on-demand data queries
 - **MCP Server** -- Use your fitness data directly in Claude Desktop
-- **Computed Analytics** -- Training load, HR drift, A:C ratio, pacing analysis, anomaly detection, periodization, personal records
+- **Computed Analytics** -- Training load, HR drift, A:C load-ramp ratio, pacing analysis, anomaly detection, personal records
 - **Longitudinal Review** -- Multi-year trend analysis surfacing plateaus and regime shifts
 - **Cross-Platform Scheduling** -- Automatic daily sync via launchd (macOS) or Task Scheduler (Windows)
 - **Smart Sync** -- Skips unchanged daily metrics to save API calls (`--dry-run` to preview, `--force` to override)

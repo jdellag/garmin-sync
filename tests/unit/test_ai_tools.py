@@ -19,7 +19,7 @@ class TestToolDefinitions:
     def test_tools_is_list(self):
         """Test that TOOLS is a non-empty list."""
         assert isinstance(TOOLS, list)
-        assert len(TOOLS) == 12
+        assert len(TOOLS) == 9
 
     def test_all_tools_have_required_structure(self):
         """Test that all tools have correct OpenAI function schema structure."""
@@ -35,19 +35,22 @@ class TestToolDefinitions:
     def test_tool_names_match(self):
         """Test that get_tool_names returns correct names."""
         names = get_tool_names()
-        assert len(names) == 12
+        assert len(names) == 9
         assert "get_recent_activities" in names
         assert "get_recovery_status" in names
         assert "get_training_load_analysis" in names
         assert "get_strength_training_summary" in names
         assert "get_exercise_progression" in names
-        assert "get_workout_details" in names
         assert "get_weekly_comparison" in names
         assert "get_cardio_performance" in names
         assert "get_longitudinal_summary" in names
-        assert "get_anomaly_report" in names
-        assert "get_periodization_status" in names
         assert "sync_garmin_data" in names
+        # Consolidated away: anomalies live in get_recovery_status; set detail
+        # via get_strength_training_summary(include_sets=True); periodization
+        # module removed
+        assert "get_workout_details" not in names
+        assert "get_anomaly_report" not in names
+        assert "get_periodization_status" not in names
 
     def test_get_exercise_progression_has_required_param(self):
         """Test that exercise_name is required for get_exercise_progression."""
@@ -130,20 +133,6 @@ class TestToolExecutor:
         agg.get_exercise_rpe_trend.return_value = {
             "sessions": [],
             "rpe_trend": None,
-        }
-        agg.get_stress_recovery_correlation.return_value = {
-            "days_analyzed": 0,
-            "avg_stress_training_days": None,
-            "avg_stress_rest_days": None,
-            "high_stress_poor_recovery_days": 0,
-            "patterns": [],
-        }
-        agg.get_sleep_performance_correlation.return_value = {
-            "data_points": 0,
-            "sleep_score_stats": None,
-            "by_sleep_grade": {},
-            "hrv_performance_link": None,
-            "insight": None,
         }
         agg.get_strength_prs.return_value = []
         mock_comparison = MagicMock()
@@ -246,15 +235,19 @@ class TestToolExecutor:
         assert len(result["sessions"]) == 1
         assert result["current_1rm_lbs"] == 198  # 90 kg * 2.20462
 
-    def test_get_workout_details(self, executor, mock_repo):
-        """Test get_workout_details delegates to repository."""
+    def test_strength_summary_include_sets(self, executor, mock_repo):
+        """include_sets=True attaches set-by-set detail to the summary."""
+        mock_repo.get_hevy_workout_count.return_value = 1
+        mock_repo.get_hevy_workouts.return_value = []
         mock_repo.get_hevy_workout_details.return_value = [{"title": "Push"}]
 
-        result = executor.get_workout_details(days=7)
+        result = executor.get_strength_training_summary(days=7, include_sets=True)
 
-        assert len(result) == 1
-        assert result[0]["title"] == "Push"
+        assert result["workouts_detail"] == [{"title": "Push"}]
         mock_repo.get_hevy_workout_details.assert_called_once_with(days=7)
+
+        result = executor.get_strength_training_summary(days=7)
+        assert "workouts_detail" not in result
 
     def test_get_weekly_comparison(self, executor):
         """Test get_weekly_comparison returns comparison data."""
@@ -572,9 +565,8 @@ class TestChatSessionWithTools:
 
         assert "tools_enabled" in ctx
         assert "tool_count" in ctx
-        # bumped to 12 after adding anomaly_report + periodization_status
         assert ctx["tools_enabled"] is True
-        assert ctx["tool_count"] == 12
+        assert ctx["tool_count"] == 9
 
     def test_context_summary_tools_disabled(self, session):
         """Test context summary when tools are disabled."""
@@ -809,8 +801,6 @@ class TestToolExecutorExecutionPaths:
         }
         agg.get_sleep_respiration_trends.return_value = {}
         agg.get_allday_respiration_spo2.return_value = {}
-        agg.get_stress_recovery_correlation.return_value = {}
-        agg.get_sleep_performance_correlation.return_value = {}
         return agg
 
     @pytest.fixture
@@ -838,47 +828,6 @@ class TestToolExecutorExecutionPaths:
         result = executor.get_recovery_status()
         assert "anomaly_error" in result
         assert "anomalies" not in result
-
-    @patch("garmin_sync.reports.anomaly_detector.AnomalyDetector")
-    def test_get_anomaly_report_returns_structured_summary(
-        self, mock_detector_cls, executor
-    ):
-        """Test that anomaly report returns correct summary counts."""
-        mock_detector_cls.return_value.detect_anomalies.return_value = [
-            {"check": "training_overload", "severity": "critical", "message": "A:C > 1.5", "data": {}},
-            {"check": "hrv_crash", "severity": "warning", "message": "HRV dropped", "data": {}},
-            {"check": "rhr_spike", "severity": "warning", "message": "RHR elevated", "data": {}},
-        ]
-        result = executor.get_anomaly_report()
-        assert result["total"] == 3
-        assert result["summary"]["critical"] == 1
-        assert result["summary"]["warning"] == 2
-
-    @patch("garmin_sync.reports.anomaly_detector.AnomalyDetector")
-    def test_get_anomaly_report_empty_when_healthy(self, mock_detector_cls, executor):
-        """Test that anomaly report is empty when no anomalies detected."""
-        mock_detector_cls.return_value.detect_anomalies.return_value = []
-        result = executor.get_anomaly_report()
-        assert result["total"] == 0
-        assert result["anomalies"] == []
-
-    @patch("garmin_sync.reports.periodization.PeriodizationAnalyzer")
-    def test_get_periodization_status_returns_all_sections(
-        self, mock_analyzer_cls, executor
-    ):
-        """Test that periodization status returns phase, readiness, and deload."""
-        mock_analyzer_cls.return_value.get_periodization_summary.return_value = {
-            "phase": {"phase": "build"},
-            "readiness": {"score": 72},
-            "deload": {"recommended": False},
-        }
-        result = executor.get_periodization_status()
-        assert "phase" in result
-        assert result["phase"]["phase"] == "build"
-        assert "readiness" in result
-        assert result["readiness"]["score"] == 72
-        assert "deload" in result
-        assert result["deload"]["recommended"] is False
 
     @pytest.mark.parametrize(
         "ratio,expected",
@@ -913,7 +862,6 @@ class TestToolDescriptionQuality:
         """Check that HEVY-dependent tools mention HEVY in their description."""
         hevy_tools = {
             "get_exercise_progression",
-            "get_workout_details",
             "get_strength_training_summary",
         }
         for tool in TOOLS:

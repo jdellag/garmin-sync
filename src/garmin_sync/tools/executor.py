@@ -113,7 +113,6 @@ class ToolExecutor:
         """
         today = date.today()
         week_ago = today - timedelta(days=6)
-        month_ago = today - timedelta(days=28)
 
         hrv = self.agg.get_hrv_context(today)
         sleep = self.agg.get_sleep_consistency(week_ago, today)
@@ -122,8 +121,6 @@ class ToolExecutor:
         readiness = self.agg.get_training_readiness_latest(today)
         respiration = self.agg.get_sleep_respiration_trends(week_ago, today)
         allday_resp = self.agg.get_allday_respiration_spo2(week_ago, today)
-        stress_recovery = self.agg.get_stress_recovery_correlation(month_ago, today)
-        sleep_performance = self.agg.get_sleep_performance_correlation(month_ago, today)
 
         # Identify weakest training-readiness component
         component_keys = [
@@ -188,20 +185,6 @@ class ToolExecutor:
                 "trend": rhr.get("trend"),
             },
             "training_readiness": readiness_out,
-            "stress_recovery": {
-                "stress_on_training_days": stress_recovery.get("avg_stress_training_days"),
-                "stress_on_rest_days": stress_recovery.get("avg_stress_rest_days"),
-                "high_stress_poor_recovery_days": stress_recovery.get(
-                    "high_stress_poor_recovery_days", 0
-                ),
-                "patterns": stress_recovery.get("patterns", []),
-            },
-            "sleep_performance": {
-                "data_points": sleep_performance.get("data_points", 0),
-                "by_sleep_grade": sleep_performance.get("by_sleep_grade", {}),
-                "hrv_performance_link": sleep_performance.get("hrv_performance_link"),
-                "insight": sleep_performance.get("insight"),
-            },
             "last_sync": self.repo.get_latest_sync_timestamp(),
         }
 
@@ -270,11 +253,13 @@ class ToolExecutor:
             "training_effect_balance": load.get("training_effect_balance"),
         }
 
-    def get_strength_training_summary(self, days: int = 7) -> dict:
+    def get_strength_training_summary(self, days: int = 7, include_sets: bool = False) -> dict:
         """Get HEVY strength training summary.
 
         Args:
             days: Days to analyze (default: 7)
+            include_sets: Also include per-workout set-by-set detail
+                (e.g. "135x10, 155x8") under ``workouts_detail``
 
         Returns:
             Dict with sessions, total volume (lbs), sets by muscle group,
@@ -361,6 +346,12 @@ class ToolExecutor:
         if strength_prs:
             result["prs"] = strength_prs
 
+        # Optional set-by-set breakdown
+        if include_sets:
+            result["workouts_detail"] = _sanitize_hevy_text(
+                self.repo.get_hevy_workout_details(days=days)
+            )
+
         return result
 
     def _get_stl_confidence(self) -> str:
@@ -444,17 +435,6 @@ class ToolExecutor:
             result["rpe_trend"] = rpe_data["rpe_trend"]
 
         return result
-
-    def get_workout_details(self, days: int = 7) -> list[dict]:
-        """Get detailed HEVY workouts with exercise and set breakdown.
-
-        Args:
-            days: Days to look back (default: 7)
-
-        Returns:
-            List of workouts with exercises and sets (e.g., "135x10, 155x8").
-        """
-        return _sanitize_hevy_text(self.repo.get_hevy_workout_details(days=days))
 
     def get_weekly_comparison(self) -> dict:
         """Compare this week vs last week across all metrics.
@@ -547,14 +527,15 @@ class ToolExecutor:
         """Get cardio performance metrics.
 
         Bundles running cadence trends, VO2 max progression, elevation
-        summary, and aerobic/anaerobic training effect balance.
+        summary, and pacing consistency. Training-effect balance lives in
+        get_training_load_analysis (one owner per metric).
 
         Args:
             days: Number of days to analyse (default: 28)
 
         Returns:
-            Dict with cadence, vo2_max, elevation, and training_effect
-            sections.
+            Dict with cadence, vo2_max, and elevation sections (plus
+            pacing when split data exists).
         """
         today = date.today()
         start = today - timedelta(days=days - 1)
@@ -562,7 +543,6 @@ class ToolExecutor:
         cadence = self.agg.get_cadence_analysis(start, today)
         vo2 = self.agg.get_vo2_max_trend(start, today)
         elevation = self.agg.get_elevation_summary(start, today)
-        load = self.agg.get_training_load_trend(today)
         pacing = self.agg.get_pacing_trends(start, today)
 
         result = {
@@ -587,11 +567,6 @@ class ToolExecutor:
                 "vert_per_hour": elevation.get("vert_per_hour"),
                 "by_type": elevation.get("by_activity_type", {}),
             },
-            "training_effect": {
-                "avg_aerobic": load.get("avg_training_effect_aerobic"),
-                "avg_anaerobic": load.get("avg_training_effect_anaerobic"),
-                "balance": load.get("training_effect_balance"),
-            },
         }
 
         if pacing.get("activities_with_splits", 0) > 0:
@@ -603,40 +578,6 @@ class ToolExecutor:
             }
 
         return result
-
-    def get_anomaly_report(self) -> dict:
-        """Scan recent health and training data for anomalies.
-
-        Returns:
-            Dict with anomaly list (sorted by severity) and summary
-            counts per severity level.
-        """
-        from garmin_sync.reports.anomaly_detector import AnomalyDetector
-
-        detector = AnomalyDetector(self.repo.db)
-        anomalies = detector.detect_anomalies()
-
-        summary = {"critical": 0, "warning": 0, "info": 0}
-        for a in anomalies:
-            summary[a["severity"]] = summary.get(a["severity"], 0) + 1
-
-        return {
-            "anomalies": anomalies,
-            "summary": summary,
-            "total": len(anomalies),
-        }
-
-    def get_periodization_status(self) -> dict:
-        """Get current training phase, readiness score, and deload recommendation.
-
-        Returns:
-            Dict with ``phase``, ``readiness`` (0-100 composite score with
-            traffic-light signal), and ``deload`` recommendation.
-        """
-        from garmin_sync.reports.periodization import PeriodizationAnalyzer
-
-        analyzer = PeriodizationAnalyzer(self.repo.db)
-        return analyzer.get_periodization_summary()
 
     def sync_garmin_data(self, days: int = 1) -> dict:
         """Sync latest data from Garmin Connect (and HEVY if configured).

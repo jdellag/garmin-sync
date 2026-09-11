@@ -95,20 +95,6 @@ class TestMCPServer:
             "sessions": [],
             "rpe_trend": None,
         }
-        agg.get_stress_recovery_correlation.return_value = {
-            "days_analyzed": 0,
-            "avg_stress_training_days": None,
-            "avg_stress_rest_days": None,
-            "high_stress_poor_recovery_days": 0,
-            "patterns": [],
-        }
-        agg.get_sleep_performance_correlation.return_value = {
-            "data_points": 0,
-            "sleep_score_stats": None,
-            "by_sleep_grade": {},
-            "hrv_performance_link": None,
-            "insight": None,
-        }
         agg.get_strength_prs.return_value = []
         agg.get_strength_exercise_progression.return_value = {
             "exercise": "Bench Press",
@@ -886,29 +872,6 @@ class TestMCPPhase2Tools:
         assert result["found"] is False
         assert "No data found" in result["message"]
 
-    def test_get_workout_details(self, mock_repo, mock_aggregator):
-        """Test workout details returns repository data."""
-        from garmin_sync.mcp import server
-
-        executor = ToolExecutor(mock_repo, mock_aggregator)
-        with patch.object(server, "_get_executor", return_value=executor):
-            result = server.get_workout_details(days=7)
-
-        mock_repo.get_hevy_workout_details.assert_called_once_with(days=7)
-        assert len(result) == 1
-        assert result[0]["title"] == "Push Day"
-        assert len(result[0]["exercises"]) == 2
-
-    def test_get_workout_details_custom_days(self, mock_repo, mock_aggregator):
-        """Test workout details with custom days parameter."""
-        from garmin_sync.mcp import server
-
-        executor = ToolExecutor(mock_repo, mock_aggregator)
-        with patch.object(server, "_get_executor", return_value=executor):
-            server.get_workout_details(days=30)
-
-        mock_repo.get_hevy_workout_details.assert_called_once_with(days=30)
-
     def test_get_weekly_comparison(self, mock_repo, mock_aggregator):
         """Test weekly comparison format."""
         from garmin_sync.mcp import server
@@ -1075,18 +1038,6 @@ class TestMCPPhase2EdgeCases:
         assert result["current_1rm_lbs"] is None
         assert result["progression_pct"] is None
 
-    def test_get_workout_details_empty(self, mock_repo):
-        """Test workout details with no workouts."""
-        from garmin_sync.mcp import server
-
-        mock_agg = MagicMock()
-
-        executor = ToolExecutor(mock_repo, mock_agg)
-        with patch.object(server, "_get_executor", return_value=executor):
-            result = server.get_workout_details(days=7)
-
-        assert result == []
-
     def test_get_weekly_comparison_with_none_values(self, mock_repo):
         """Test weekly comparison handles None values."""
         from garmin_sync.mcp import server
@@ -1149,121 +1100,11 @@ class TestMCPPhase2EdgeCases:
         assert len(result["errors"]) == 5
 
 
-class TestAnomalyAndPeriodizationTools:
-    """Test get_anomaly_report and get_periodization_status executor methods."""
-
-    @pytest.fixture
-    def mock_repo(self):
-        repo = MagicMock()
-        repo.db = MagicMock()
-        return repo
-
-    @pytest.fixture
-    def mock_aggregator(self):
-        return MagicMock()
-
-    @pytest.fixture
-    def executor(self, mock_repo, mock_aggregator):
-        return ToolExecutor(mock_repo, mock_aggregator)
-
-    @patch("garmin_sync.reports.anomaly_detector.AnomalyDetector")
-    def test_get_anomaly_report_no_anomalies(self, mock_detector_cls, executor):
-        """Test anomaly report with no anomalies."""
-        mock_detector_cls.return_value.detect_anomalies.return_value = []
-        result = executor.get_anomaly_report()
-        assert result["total"] == 0
-        assert result["anomalies"] == []
-        assert result["summary"]["critical"] == 0
-
-    @patch("garmin_sync.reports.anomaly_detector.AnomalyDetector")
-    def test_get_anomaly_report_with_anomalies(self, mock_detector_cls, executor):
-        """Test anomaly report with mixed severity anomalies."""
-        mock_detector_cls.return_value.detect_anomalies.return_value = [
-            {"check": "training_overload", "severity": "critical", "message": "A:C > 1.5", "data": {}},
-            {"check": "hrv_crash", "severity": "warning", "message": "HRV dropped", "data": {}},
-            {"check": "detraining", "severity": "info", "message": "A:C < 0.8", "data": {}},
-        ]
-        result = executor.get_anomaly_report()
-        assert result["total"] == 3
-        assert result["summary"]["critical"] == 1
-        assert result["summary"]["warning"] == 1
-        assert result["summary"]["info"] == 1
-
-    @patch("garmin_sync.reports.periodization.PeriodizationAnalyzer")
-    def test_get_periodization_status(self, mock_analyzer_cls, executor):
-        """Test periodization status returns summary."""
-        mock_analyzer_cls.return_value.get_periodization_summary.return_value = {
-            "phase": {"phase": "build", "description": "Progressive overload"},
-            "readiness": {"score": 75, "signal": "green", "components": {}},
-            "deload": {"recommended": False, "reason": None},
-        }
-        result = executor.get_periodization_status()
-        assert result["phase"]["phase"] == "build"
-        assert result["readiness"]["score"] == 75
-        assert result["deload"]["recommended"] is False
-
-    @patch("garmin_sync.reports.anomaly_detector.AnomalyDetector")
-    def test_recovery_status_includes_anomalies(self, mock_detector_cls, mock_repo, mock_aggregator):
-        """Test that get_recovery_status enriches with anomalies."""
-        mock_aggregator.get_hrv_context.return_value = {"baseline_7d": 65, "last_night": 62, "delta_from_baseline": -4.6, "status": "BALANCED", "days_below_baseline": 1}
-        mock_aggregator.get_sleep_consistency.return_value = {"avg_sleep_seconds": 28800, "sleep_time_variance_mins": 30, "avg_deep_pct": 18.5, "avg_rem_pct": 22.0}
-        mock_aggregator.get_body_battery_recovery.return_value = {"avg_overnight_recovery": 60, "avg_morning_high": 85}
-        mock_aggregator.get_resting_hr_trend.return_value = {"current": 48, "baseline_28d": 50, "delta": -2, "trend": "falling"}
-        mock_aggregator.get_training_readiness_latest.return_value = {"score": 70, "level": "Good"}
-        mock_aggregator.get_sleep_respiration_trends.return_value = {}
-        mock_aggregator.get_allday_respiration_spo2.return_value = {}
-        mock_aggregator.get_stress_recovery_correlation.return_value = {}
-        mock_aggregator.get_sleep_performance_correlation.return_value = {}
-        mock_repo.get_latest_sync_timestamp.return_value = "2026-05-23T10:00:00Z"
-
-        mock_detector_cls.return_value.detect_anomalies.return_value = [
-            {"check": "hrv_crash", "severity": "warning", "message": "HRV dropped", "data": {}},
-        ]
-
-        executor = ToolExecutor(mock_repo, mock_aggregator)
-        result = executor.get_recovery_status()
-        assert "anomalies" in result
-        assert len(result["anomalies"]) == 1
-
-    @patch("garmin_sync.reports.anomaly_detector.AnomalyDetector")
-    def test_recovery_status_no_anomalies_key_when_empty(self, mock_detector_cls, mock_repo, mock_aggregator):
-        """Test that get_recovery_status omits anomalies key when no anomalies."""
-        mock_aggregator.get_hrv_context.return_value = {"baseline_7d": 65, "last_night": 62, "delta_from_baseline": -4.6, "status": "BALANCED", "days_below_baseline": 1}
-        mock_aggregator.get_sleep_consistency.return_value = {"avg_sleep_seconds": 28800}
-        mock_aggregator.get_body_battery_recovery.return_value = {"avg_overnight_recovery": 60, "avg_morning_high": 85}
-        mock_aggregator.get_resting_hr_trend.return_value = {"current": 48, "baseline_28d": 50, "delta": -2, "trend": "falling"}
-        mock_aggregator.get_training_readiness_latest.return_value = {"score": 70}
-        mock_aggregator.get_sleep_respiration_trends.return_value = {}
-        mock_aggregator.get_allday_respiration_spo2.return_value = {}
-        mock_aggregator.get_stress_recovery_correlation.return_value = {}
-        mock_aggregator.get_sleep_performance_correlation.return_value = {}
-        mock_repo.get_latest_sync_timestamp.return_value = "2026-05-23T10:00:00Z"
-
-        mock_detector_cls.return_value.detect_anomalies.return_value = []
-
-        executor = ToolExecutor(mock_repo, mock_aggregator)
-        result = executor.get_recovery_status()
-        assert "anomalies" not in result
-
-    def test_execute_dispatches_anomaly_report(self, executor):
-        """Test that execute() dispatches to get_anomaly_report."""
-        with patch.object(executor, "get_anomaly_report", return_value={"total": 0}) as mock:
-            result = executor.execute("get_anomaly_report", {})
-            mock.assert_called_once()
-            assert result["total"] == 0
-
-    def test_execute_dispatches_periodization_status(self, executor):
-        """Test that execute() dispatches to get_periodization_status."""
-        with patch.object(executor, "get_periodization_status", return_value={"phase": {}}) as mock:
-            result = executor.execute("get_periodization_status", {})
-            mock.assert_called_once()
-
-
 class TestMCPCLIPhase2:
     """Test MCP CLI commands for Phase 2."""
 
     def test_mcp_info_shows_all_tools(self):
-        """Test mcp info command outputs all 8 tools."""
+        """Test mcp info command lists the consolidated tool set."""
         from typer.testing import CliRunner
         from garmin_sync.cli import app
 
@@ -1271,16 +1112,17 @@ class TestMCPCLIPhase2:
         result = runner.invoke(app, ["mcp", "info"])
 
         assert result.exit_code == 0
-        # Phase 1 tools
         assert "get_recent_activities" in result.stdout
         assert "get_recovery_status" in result.stdout
         assert "get_training_load_analysis" in result.stdout
         assert "get_strength_training_summary" in result.stdout
-        # Phase 2 tools
         assert "get_exercise_progression" in result.stdout
-        assert "get_workout_details" in result.stdout
         assert "get_weekly_comparison" in result.stdout
         assert "sync_garmin_data" in result.stdout
+        # Consolidated away
+        assert "get_workout_details" not in result.stdout
+        assert "get_anomaly_report" not in result.stdout
+        assert "get_periodization_status" not in result.stdout
 
 
 class TestMCPErrorHandling:
