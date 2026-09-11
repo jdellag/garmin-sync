@@ -496,6 +496,20 @@ class ChatSession:
                     pace_secs = int(pace_sec_per_km % 60)
                     pace_str = f"pace {pace_mins}:{pace_secs:02d}/km"
 
+            # Max speed → best instantaneous pace for run types
+            best_str = ""
+            if act.max_speed_mps and act.max_speed_mps > 0:
+                if act.activity_type in (
+                    "running", "treadmill_running", "trail_running"
+                ):
+                    best_sec_per_km = 1000 / act.max_speed_mps
+                    best_str = (
+                        f"max {int(best_sec_per_km // 60)}:"
+                        f"{int(best_sec_per_km % 60):02d}/km"
+                    )
+                else:
+                    best_str = f"max {act.max_speed_mps * 3.6:.1f} km/h"
+
             # Format heart rate (avg and max)
             hr_str = ""
             if act.average_hr and act.max_hr:
@@ -535,7 +549,7 @@ class ChatSession:
             cal_str = f"{act.calories} cal" if act.calories else ""
 
             # Build details string - primary metrics first
-            primary = ", ".join(filter(None, [duration_str, distance_str, pace_str, hr_str]))
+            primary = ", ".join(filter(None, [duration_str, distance_str, pace_str, best_str, hr_str]))
             secondary = ", ".join(filter(None, [te_str, load_str, drift_str, elev_str, cadence_str, cal_str]))
 
             # Include time of day for context

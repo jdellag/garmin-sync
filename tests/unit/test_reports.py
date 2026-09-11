@@ -1183,6 +1183,7 @@ class TestJSONReportGeneration:
                 calories=500,
                 training_load=80.0,
                 training_effect_aerobic=3.5,
+                max_speed_mps=4.13,
             ))
 
         # Add daily summaries
@@ -1313,6 +1314,11 @@ class TestJSONReportGeneration:
         assert "count" in running
         assert "duration_sec" in running
         assert "distance_m" in running
+
+        # Top sessions expose max speed in km/h
+        top = result["activities"]["top_sessions"]
+        assert top, "expected at least one top session"
+        assert top[0]["max_speed_kmh"] == pytest.approx(14.9, abs=0.05)
 
     def test_json_recovery_hrv_structure(self, db_with_comprehensive_data):
         """JSON recovery.hrv has all required fields."""

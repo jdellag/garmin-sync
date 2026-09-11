@@ -321,6 +321,7 @@ class DataAggregator:
                 start_time,
                 duration_seconds,
                 distance_meters,
+                max_speed_mps,
                 average_hr,
                 calories,
                 training_load

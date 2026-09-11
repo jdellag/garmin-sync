@@ -117,7 +117,8 @@ def get_recent_activities(
         limit: Max results (default: 20)
 
     Returns activities with: name, type, duration, distance, HR, training load, HR drift,
-    and per-km pace splits (with pacing consistency and negative-split detection).
+    max speed (best instantaneous pace for runs), and per-km pace splits (with pacing
+    consistency and negative-split detection).
     """
     return _get_executor().get_recent_activities(
         days=days,

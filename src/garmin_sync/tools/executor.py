@@ -92,7 +92,8 @@ class ToolExecutor:
             limit: Max results (default: 20)
 
         Returns:
-            List of activities with: name, type, duration, distance, HR, training load, HR drift.
+            List of activities with: name, type, duration, distance, HR, training load,
+            HR drift, and max speed (plus best instantaneous pace for runs).
         """
         start = (date.today() - timedelta(days=days)).isoformat()
         activities = self.repo.get_activities(
@@ -682,6 +683,9 @@ class ToolExecutor:
                 "start_time_local": act.start_time_local,
                 "duration_seconds": act.duration_seconds,
                 "distance_meters": act.distance_meters,
+                "max_speed_kmh": (
+                    round(act.max_speed_mps * 3.6, 1) if act.max_speed_mps else None
+                ),
                 "average_hr": act.average_hr,
                 "max_hr": act.max_hr,
                 "calories": act.calories,
@@ -695,11 +699,14 @@ class ToolExecutor:
                 "vo2_max": act.vo2_max,
             }
             # Calculate pace for running activities
-            if act.distance_meters and act.duration_seconds and act.activity_type in (
+            if act.activity_type in (
                 "running", "treadmill_running", "trail_running"
             ):
-                pace_sec_per_km = act.duration_seconds / (act.distance_meters / 1000)
-                data["pace_min_per_km"] = round(pace_sec_per_km / 60, 2)
+                if act.distance_meters and act.duration_seconds:
+                    pace_sec_per_km = act.duration_seconds / (act.distance_meters / 1000)
+                    data["pace_min_per_km"] = round(pace_sec_per_km / 60, 2)
+                if act.max_speed_mps and act.max_speed_mps > 0:
+                    data["best_pace_min_per_km"] = round((1000 / act.max_speed_mps) / 60, 2)
 
             # Add splits summary for activities with FIT-parsed split data
             if getattr(act, "fit_parsed", False):

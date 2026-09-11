@@ -518,6 +518,7 @@ class TestChatSessionCaching:
         mock_activity.elevation_gain_meters = 50
         mock_activity.avg_cadence = 170
         mock_activity.calories = 350
+        mock_activity.max_speed_mps = 4.13
         mock_repository.get_activities.return_value = [mock_activity]
 
         mock_repository.get_hevy_workout_details.return_value = [{
@@ -540,6 +541,10 @@ class TestChatSessionCaching:
         assert len(cache.hevy_messages) == 2  # user + assistant
         assert cache.token_count > 0
         assert cache.data_fingerprint is not None
+
+        # Run context line includes best pace derived from max speed
+        # (4.13 m/s -> 1000/4.13 ≈ 242s ≈ 4:02/km)
+        assert "max 4:02/km" in cache.garmin_messages[0]["content"]
 
     def test_fingerprint_equality(self):
         """Test DataFingerprint equality comparison."""
