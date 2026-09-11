@@ -5,10 +5,40 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from garmin_sync.cli import app
+from garmin_sync.cli import _extract_verdict, app
 
 
 runner = CliRunner()
+
+
+class TestExtractVerdict:
+    """Test the daily-verdict extraction used for analysis continuity."""
+
+    def test_extracts_current_report_format(self):
+        text = (
+            "# Fitness Analysis - Friday, September 11, 2026\n\n"
+            "## Today: **Yellow-red for rest or very light recovery**\n"
+            "This fits your usual Friday rest slot.\n"
+        )
+        assert _extract_verdict(text) == "Yellow-red for rest or very light recovery"
+
+    def test_extracts_new_report_format(self):
+        text = (
+            "## 1) Today's call\n"
+            "Today: 40 min Z2 run with 4 strides\n"
+            "Driven by HRV -2% and RHR at baseline.\n"
+        )
+        assert _extract_verdict(text) == "40 min Z2 run with 4 strides"
+
+    def test_returns_none_without_today_line(self):
+        text = "RECOVERY STATUS\nHRV 81 ms (+15%)\nTRAINING LOAD\n"
+        assert _extract_verdict(text) is None
+
+    def test_caps_verdict_length(self):
+        text = "Today: " + "x" * 500
+        verdict = _extract_verdict(text)
+        assert verdict is not None
+        assert len(verdict) <= 140
 
 
 class TestMainCLI:

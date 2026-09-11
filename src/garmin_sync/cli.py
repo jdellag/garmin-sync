@@ -1007,6 +1007,27 @@ def _get_today_activities_summary() -> str:
     return "; ".join(summaries)
 
 
+import re
+
+# Matches the daily verdict line in a saved report, e.g.
+#   "## Today: **Yellow — easy only**"  or  "Today: 40 min Z2 run"
+# (the report format mandates a `Today: <call>` line). Old reports without a
+# "Today:" line simply contribute no verdict.
+_VERDICT_RE = re.compile(
+    r"^[#>\s*\d).-]*today['’]?s?(?:\s+call)?\s*:\s*(.+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _extract_verdict(report_text: str) -> str | None:
+    """Pull the one-line daily verdict out of a saved analysis report."""
+    match = _VERDICT_RE.search(report_text)
+    if not match:
+        return None
+    verdict = match.group(1).replace("*", "").replace("`", "").strip(" .:-—")
+    return verdict[:140] or None
+
+
 def _run_analysis() -> tuple[bool, str, str]:
     """Run AI analysis on fitness data.
 
@@ -1059,17 +1080,28 @@ def _run_analysis() -> tuple[bool, str, str]:
         except Exception:
             logger.debug("Anomaly fallback in _run_analysis failed", exc_info=True)
 
-    # Load previous analyses for context (last 7 days)
-    previous_analyses = []
+    # Continuity context: one-line verdicts from the last 7 reports plus
+    # yesterday's full analysis. Feeding all 7 full reports back in made the
+    # model anchor on its own prior caution (echo-chamber effect); the verdict
+    # list keeps trend visibility at a fraction of the tokens.
+    yesterday_analysis: str | None = None
+    recent_verdicts: list[str] = []
     today = date.today()
     for i in range(7, 0, -1):  # Oldest first
         report_date = today - timedelta(days=i)
         report_path = settings.reports_dir / f"analysis-{report_date.isoformat()}.md"
-        if report_path.exists():
-            try:
-                previous_analyses.append(report_path.read_text())
-            except Exception:
-                logger.debug("Could not read previous analysis %s", report_path)
+        if not report_path.exists():
+            continue
+        try:
+            text = report_path.read_text()
+        except Exception:
+            logger.debug("Could not read previous analysis %s", report_path)
+            continue
+        if i == 1:
+            yesterday_analysis = text
+        verdict = _extract_verdict(text)
+        if verdict:
+            recent_verdicts.append(f"{report_date.isoformat()} ({report_date.strftime('%a')}): {verdict}")
 
     # Get today's completed activities for template
     completed_today = _get_today_activities_summary()
@@ -1092,7 +1124,8 @@ def _run_analysis() -> tuple[bool, str, str]:
         current_date=today,
         user_schedule=ai_config.schedule,
         user_context=ai_config.user_context,
-        previous_analyses=previous_analyses if previous_analyses else None,
+        yesterday_analysis=yesterday_analysis,
+        recent_verdicts=recent_verdicts or None,
         timezone=ai_config.timezone,
         completed_today=completed_today,
         strength_data=strength_data,

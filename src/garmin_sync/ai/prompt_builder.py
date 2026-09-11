@@ -88,7 +88,8 @@ def build_analysis_prompt(
     current_date: date,
     user_schedule: str,
     user_context: str,
-    previous_analyses: list[str] | None = None,
+    yesterday_analysis: str | None = None,
+    recent_verdicts: list[str] | None = None,
     timezone: str = "America/New_York",
     completed_today: str | None = None,
     strength_data: dict[str, Any] | None = None,
@@ -101,7 +102,10 @@ def build_analysis_prompt(
         current_date: Current date for context
         user_schedule: User's typical weekly training schedule (supports template variables)
         user_context: Additional user context (supports template variables)
-        previous_analyses: Optional list of previous analysis summaries to include
+        yesterday_analysis: Yesterday's analysis text (truncated; for continuity)
+        recent_verdicts: One-line "date: verdict" strings from prior reports,
+            oldest first — lets the model spot its own repeated-caution loops
+            without re-reading a week of its own prose
         timezone: Timezone for template variable processing
         completed_today: Summary of activities completed today for template
         strength_data: Optional HEVY strength training data
@@ -117,8 +121,6 @@ def build_analysis_prompt(
     processed_context = process_template(user_context, timezone, completed_today)
 
     prompt_parts = [
-        "You are an expert endurance coach analyzing fitness data from a Garmin device.",
-        "",
         "## Current Date",
         formatted_date,
         "",
@@ -138,44 +140,41 @@ def build_analysis_prompt(
             "",
         ])
 
-    if previous_analyses:
+    if recent_verdicts:
         prompt_parts.extend([
-            "## Previous Analyses",
-            "Reference these previous recommendations for continuity:",
+            "## Recent Daily Verdicts",
+            "One line per prior day, oldest first:",
+        ])
+        prompt_parts.extend(f"- {v}" for v in recent_verdicts)
+        prompt_parts.append("")
+
+    if yesterday_analysis:
+        if len(yesterday_analysis) > 3000:
+            yesterday_analysis = yesterday_analysis[:3000] + "\n...[truncated]"
+        prompt_parts.extend([
+            "## Yesterday's Analysis",
+            "For continuity of reasoning — do not simply repeat it:",
+            "",
+            yesterday_analysis,
             "",
         ])
-        for analysis in previous_analyses:
-            # Truncate long analyses to save tokens
-            if len(analysis) > 2000:
-                analysis = analysis[:2000] + "\n...[truncated]"
-            prompt_parts.append(analysis)
-            prompt_parts.append("")
 
+    # Deliberately short: one line per metric family. Interpretation nuance
+    # (citations, methodology caveats) lives in code and docs, not in every
+    # API call — a hedging-heavy dictionary makes the coach output mushy.
     prompt_parts.extend([
         "## Data Dictionary",
-        "- **HRV (Heart Rate Variability)**: Measured in milliseconds. Two baselines are shown side-by-side: (1) OUR computation: 7-day rolling mean vs 28-day baseline with personalized CV/SWC thresholds (Plews/Buchheit method). (2) GARMIN's HRV Status: their proprietary long-term baseline range + weekly avg. Both are valid; ours is more responsive to recent trends, Garmin's is more stable. Use 'meaningful_change' to judge whether a delta matters for this specific person.",
-        "- **Resting HR**: Beats per minute. Lower is generally better. Elevated RHR (3-5+ bpm above baseline) can indicate fatigue, illness, or overtraining.",
-        "- **Training Load**: Combined training stress. Cardio: Garmin's EPOC-based load (HR-derived). Strength: session RPE × duration (sRPE method, estimated when RPE not logged). Both contribute to A:C ratio. Note: combining EPOC and sRPE is approximate — the cardio/strength breakdown shows provenance.",
-        "- **AC Ratio (Acute:Chronic)**: 7-day load vs the prior 3-week weekly average (uncoupled — the recent week is excluded from the baseline). A DESCRIPTIVE load-ramp signal, NOT an injury predictor (the ACWR injury 'sweet spot' is not evidence-supported; Impellizzeri 2020). Read as: <0.8 reduced load, 0.8-1.3 steady, 1.3-1.5 building, >1.5 rapid increase (check recovery). Combines cardio + strength load, which is approximate.",
-        "- **Body Battery**: Garmin's energy metric (0-100). Data shown is from COMPLETED days only (today is excluded because a morning sync only captures partial overnight charge). 'Last night' recovery = yesterday's row. Morning high and overnight recovery are key indicators.",
-        "- **Sleep Score**: Composite 0-100 score. Deep sleep % (15-20% ideal) and REM % (20-25% ideal) are important components.",
-        "- **HRV Status**: Garmin's assessment - BALANCED (normal), LOW (stressed/fatigued), HIGH (well recovered), UNBALANCED (inconsistent).",
-        "- **Training Readiness**: Garmin's composite score (0-100) combining sleep, recovery, HRV, stress, and training load balance.",
-        "- **HR Drift**: Cardiac decoupling during steady-state exercise. (HR_second_half - HR_first_half) / HR_first_half. >5% suggests aerobic fatigue.",
-        "- **Strength Volume**: Total weight × reps from HEVY (in lbs). Higher volume = more training stress. Track by muscle group for balance.",
-        "- **Estimated 1RM**: Calculated max using Epley formula: weight × (1 + reps/30). Tracks strength progression over time (in lbs).",
-        "- **Running Cadence**: Steps per minute. 170-180+ is generally efficient for distance runners. Tracked per activity type.",
-        "- **VO2 Max**: Estimated maximal oxygen uptake (mL/kg/min). Higher is better. Delta > +1.0 = improving, < -1.0 = declining.",
-        "- **Elevation (Vert/Hour)**: Meters of elevation gain per hour of activity. Measures climbing efficiency.",
-        "- **Training Effect**: Garmin's 0-5 scale per activity. Aerobic builds endurance; anaerobic builds speed/power. Balance indicates training emphasis.",
-        "- **Sleep Respiration**: Breaths per minute during sleep. Normal ~12-20. Rising trend may signal illness.",
-        "- **Sleep SpO2**: Blood oxygen saturation during sleep (%). Normal 95-100%. Values <94% avg or <90% min warrant attention.",
-        "- **Readiness Components**: Training readiness is composed of sleep, recovery, HRV, stress history, and load balance scores. The weakest component identifies what to prioritize.",
-        "- **RPE (Rate of Perceived Exertion)**: Self-reported effort 1-10 from HEVY. Overreaching = RPE rising while volume flat/falling.",
-        "- **RPE-Adjusted Volume**: weight × reps × (RPE/10). Normalizes training stress by perceived effort.",
-        "- **Stress-Recovery Correlation**: Cross-references daily stress levels with next-day body battery start. High stress (>50) + poor BB start (<30) = recovery concern.",
-        "- **Sleep-Performance Correlation**: Personal A-F sleep grade (mean ± σ) linked to next-day training load, HR drift, and training effect.",
-        "- **Personal Records**: Cardio PRs detected during sync (fastest 5K/10K/half, longest run, highest load). Strength PRs from HEVY's is_pr flag.",
+        "- **HRV**: ms. `delta_pct` = 7-day rolling mean vs 28-day baseline; treat a drop as real only beyond `meaningful_change` (the athlete's own normal variability). Garmin's status (BALANCED/LOW/HIGH/UNBALANCED) is an independent label.",
+        "- **Resting HR**: vs 28-day baseline; +3-5 bpm sustained suggests fatigue or illness.",
+        "- **Training Load**: cardio = Garmin EPOC-based; strength = sRPE-based estimate. The combined total is approximate — read the cardio/strength breakdown.",
+        "- **AC Ratio**: 7-day load vs prior-3-week weekly average. Descriptive ramp rate only (not an injury predictor): <0.8 reduced, 0.8-1.3 steady, 1.3-1.5 building, >1.5 rapid increase.",
+        "- **Body Battery**: 0-100, completed days only (today excluded). Overnight recovery and morning high are the key reads.",
+        "- **Sleep Score**: 0-100 composite; deep 15-20% and REM 20-25% are the ideal bands.",
+        "- **Training Readiness**: Garmin's own 0-100 composite; its weakest component is what to prioritize.",
+        "- **HR Drift**: >5% on a steady run suggests aerobic fatigue.",
+        "- **Strength**: volume in lbs; weekly sets shown as actual/target per muscle group; RPE 1-10 self-reported (rising RPE at flat volume = overreaching sign); est. 1RM via Epley.",
+        "- **Cardio performance**: cadence (spm), VO2 max trend (±1.0 is meaningful), elevation vert/hour — background context, not daily decision drivers.",
+        "- **Watch items**: sleep SpO2 <94% avg or a rising sleep respiration trend can signal illness — mention only if present.",
         "",
         "## 30-Day Baseline Metrics",
         "```json",
@@ -274,21 +273,20 @@ def build_analysis_prompt(
             severity = a.get("severity", "info").upper()
             message = a.get("message", "")
             prompt_parts.append(f"- **[{severity}]** {message}")
-        prompt_parts.extend(["", "Address these in your analysis.", ""])
+        prompt_parts.extend(["", "Factor these into your call.", ""])
 
     prompt_parts.extend([
         "## Instructions",
-        f"Today is {day_of_week}. Based on the data above:",
+        f"Today is {day_of_week}. Write a concise coaching analysis with exactly three sections:",
         "",
-        "1. **Recovery Status**: Assess current recovery using HRV, sleep, body battery, resting HR, stress-recovery patterns, and sleep-performance correlations",
-        "2. **Training Load**: Evaluate combined training load and the acute:chronic ratio as a load-ramp/recovery signal (not injury prediction)",
-        "3. **Strength Training**: If HEVY data is available, assess muscle group balance, volume trends, RPE trends, and overreaching signals",
-        "4. **Personal Records**: If any PRs were set, celebrate them and note the progression",
-        "5. **Today's Recommendation**: Given my typical schedule and current status, what should I do today?",
-        "6. **Week Ahead**: Any adjustments to recommend for the coming week?",
-        "7. **Alerts**: Flag anything concerning that needs attention",
+        "1. **Today's call** — First line must be `Today: <specific recommendation>` (session type, duration, intensity). Then the 2-4 numbers that drove the call. If yesterday's recommendation was followed or ignored, note it in one sentence.",
+        "2. **Why** — Brief recovery + load reasoning. Cite only decision-relevant numbers; do not tour every metric. Mention strength balance vs targets, PRs, or health alerts ONLY when the data shows something noteworthy.",
+        "3. **Week ahead** — The next 2-3 days as concrete sessions (type, duration, intensity), plus the specific morning signal that would change the plan.",
         "",
-        "Keep the analysis concise but actionable. Use specific numbers from the data.",
+        "Rules:",
+        "- Be decisive. When signals conflict, make one call and say what would change your mind.",
+        "- Check the recent verdicts: if you have advised easy/rest days 3+ days in a row, do NOT default to another vague easy day. Either prescribe a structured deload (concrete volumes and duration) or state the exact criteria for resuming normal training — and say plainly if illness should be considered.",
+        "- Skip anything the data doesn't support; no filler sections. Keep the whole analysis under ~450 words.",
     ])
 
     return "\n".join(prompt_parts)
@@ -579,7 +577,6 @@ def generate_detailed_7d(
         "daily_body_battery": recovery.get("body_battery", {}).get("daily", []),
         "daily_training_load": training_load.get("daily", []),
         "top_activities": activities.get("top_sessions", []),
-        "alerts": weekly_json.get("alerts", []),
         "anomalies": weekly_json.get("anomalies", []),
     }
 
