@@ -1127,6 +1127,11 @@ class DataAggregator:
     def get_body_battery_recovery(self, start_date: date, end_date: date) -> dict:
         """Calculate body battery recovery metrics.
 
+        Excludes the current day because body battery data is cumulative
+        throughout the day — a morning sync only captures partial overnight
+        charge (e.g. max_level=41 instead of ~100).  Using only completed
+        days keeps averages and daily values accurate.
+
         Args:
             start_date: Start date
             end_date: End date
@@ -1134,6 +1139,11 @@ class DataAggregator:
         Returns:
             Dict with body battery recovery metrics
         """
+        if end_date >= date.today():
+            end_date = date.today() - timedelta(days=1)
+        if start_date > end_date:
+            start_date = end_date
+
         cursor = self.db.connection.cursor()
         result: dict = {
             "avg_overnight_recovery": None,
