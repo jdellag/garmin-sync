@@ -31,7 +31,7 @@ src/garmin_sync/
 │   └── server.py           # FastMCP server with tool definitions
 ├── ai/                     # OpenAI integration
 │   ├── config.py           # TOML config (API key, model, use_tools, StrengthConfig); atomic 0o600 write
-│   ├── chat.py             # ChatSession - interactive coach with tool calling
+│   ├── chat.py             # ChatSession - interactive coach with tool calling (reference data folded into system msg; ANALYSES_CONTEXT_DAYS / CHAT_HISTORY_LIMIT caps)
 │   ├── tools.py            # OpenAI function schemas for 9 tools
 │   ├── openai_client.py    # API wrapper (chat_with_tools, chat_with_history); sanitizes tool errors; per-call tool limit guard
 │   └── prompt_builder.py   # Daily + longitudinal prompts; verdict-list continuity (no echo chamber); safe_user_string for HEVY data

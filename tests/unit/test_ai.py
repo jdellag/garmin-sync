@@ -595,17 +595,23 @@ class TestChatSessionCaching:
         messages = chat_session.build_context_messages()
         cache = chat_session._cached_context
 
-        # Verify cache structure
-        assert cache.system_message != ""
-        assert len(cache.analyses_messages) == 2  # user + assistant
-        assert len(cache.garmin_messages) == 2  # user + assistant
-        assert len(cache.hevy_messages) == 2  # user + assistant
+        # All reference data lives in the single system message — no
+        # fabricated user/assistant priming turns.
+        assert messages[0]["role"] == "system"
+        assert all(m["role"] != "assistant" for m in messages)
+        sm = cache.system_message
+        assert "# Reference Data" in sm
+        assert "Recent Daily Analyses" in sm
+        assert "Test analysis content" in sm
+        assert "Recent Garmin Activities" in sm
+        assert "Recent Strength Training" in sm
+        assert "Push Day" in sm
         assert cache.token_count > 0
         assert cache.data_fingerprint is not None
 
         # Run context line includes best pace derived from max speed
         # (4.13 m/s -> 1000/4.13 ≈ 242s ≈ 4:02/km)
-        assert "max 4:02/km" in cache.garmin_messages[0]["content"]
+        assert "max 4:02/km" in sm
 
     def test_fingerprint_equality(self):
         """Test DataFingerprint equality comparison."""

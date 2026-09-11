@@ -42,12 +42,9 @@ class DataFingerprint:
 
 @dataclass
 class CachedChatContext:
-    """Cached context messages for the session."""
+    """Cached system message (persona + reference data) for the session."""
 
     system_message: str
-    analyses_messages: list[dict]
-    garmin_messages: list[dict]
-    hevy_messages: list[dict]
     cache_timestamp: datetime
     data_fingerprint: DataFingerprint
     token_count: int
@@ -60,6 +57,16 @@ class ChatSession:
     MAX_CONTEXT_TOKENS = 100_000  # Conservative limit for most models
     RESPONSE_RESERVE = 20_000  # Reserve for response generation
     CONTEXT_BUDGET = MAX_CONTEXT_TOKENS - RESPONSE_RESERVE
+
+    # Days of saved daily analyses preloaded into context. Deliberately small:
+    # the reports are the model's own prior output, and tools fetch anything
+    # older on demand.
+    ANALYSES_CONTEXT_DAYS = 2
+
+    # Stored chat messages carried into each API call. History persists across
+    # sessions in the DB; a large carryover makes weeks-old conversations
+    # bleed into new ones. /clear wipes it entirely.
+    CHAT_HISTORY_LIMIT = 30
 
     def __init__(
         self,
@@ -145,7 +152,7 @@ class ChatSession:
 
         analysis_mtimes: dict[str, float] = {}
         today = date.today()
-        for i in range(7, 0, -1):
+        for i in range(self.ANALYSES_CONTEXT_DAYS, 0, -1):
             report_date = today - timedelta(days=i)
             report_path = self.reports_dir / f"analysis-{report_date.isoformat()}.md"
             if report_path.exists():
@@ -181,82 +188,48 @@ class ChatSession:
         )
 
     def _build_context_cache(self) -> CachedChatContext:
-        """Build and cache static context.
+        """Build and cache the system message with reference data.
 
-        This method builds all the static context components that don't change
-        within a chat session (system message, historical analyses, Garmin
-        activities, HEVY workouts).
+        Reference data (recent analyses, Garmin activities, HEVY workouts) is
+        folded into the system message as labelled sections rather than
+        injected as fabricated user/assistant turns.
 
         Returns:
-            CachedChatContext with all static context and token count
+            CachedChatContext with the composed system message and token count
         """
-        token_count = 0
-
-        # System message
         system_message = self._build_system_message()
-        token_count += len(system_message) // 4
 
-        # Historical analyses
-        analyses_messages: list[dict] = []
-        analyses = self.get_historical_analyses(days=7)
+        context_sections: list[str] = []
+
+        analyses = self.get_historical_analyses(days=self.ANALYSES_CONTEXT_DAYS)
         if analyses:
-            analysis_context = self._format_analyses_context(analyses)
-            analyses_messages = [
-                {"role": "user", "content": analysis_context},
-                {
-                    "role": "assistant",
-                    "content": "I've reviewed your recent analyses. How can I help you today?",
-                },
-            ]
-            token_count += len(analysis_context) // 4 + 20
+            context_sections.append(self._format_analyses_context(analyses))
 
-        # Garmin activities
-        garmin_messages: list[dict] = []
         activities_context = self._get_recent_activities_context(days=7)
         if activities_context:
-            garmin_messages = [
-                {
-                    "role": "user",
-                    "content": f"Here's my recent activity data from Garmin:\n\n{activities_context}",
-                },
-                {
-                    "role": "assistant",
-                    "content": "I can see your recent Garmin activities including type, duration, distance, heart rate, and training load.",
-                },
-            ]
-            token_count += len(activities_context) // 4 + 30
+            context_sections.append(activities_context)
 
-        # HEVY workouts
-        hevy_messages: list[dict] = []
         hevy_context = self._get_recent_hevy_context(days=7)
         if hevy_context:
-            hevy_messages = [
-                {
-                    "role": "user",
-                    "content": f"Here's my recent strength training data:\n\n{hevy_context}",
-                },
-                {
-                    "role": "assistant",
-                    "content": "Thanks for sharing your strength training details. I can see your recent workouts with exercises and sets.",
-                },
-            ]
-            token_count += len(hevy_context) // 4 + 30
+            context_sections.append(hevy_context)
+
+        if context_sections:
+            system_message += (
+                "\n\n# Reference Data\n"
+                "Current data from the user's local database (tools can fetch "
+                "more or older data on demand):\n\n"
+                + "\n\n".join(context_sections)
+            )
 
         return CachedChatContext(
             system_message=system_message,
-            analyses_messages=analyses_messages,
-            garmin_messages=garmin_messages,
-            hevy_messages=hevy_messages,
             cache_timestamp=datetime.now(timezone.utc),
             data_fingerprint=self._get_data_fingerprint(),
-            token_count=token_count,
+            token_count=len(system_message) // 4,
         )
 
     def build_context_messages(self) -> list[dict]:
-        """Build message list using cached context + fresh chat history.
-
-        Uses cached static context (system message, analyses, Garmin activities,
-        HEVY workouts) and combines with fresh chat history from the database.
+        """Build message list using the cached system message + fresh chat history.
 
         Returns:
             List of message dicts ready for OpenAI API
@@ -266,22 +239,14 @@ class ChatSession:
             self._cached_context = self._build_context_cache()
 
         cache = self._cached_context
-        messages: list[dict] = []
+        messages: list[dict] = [{"role": "system", "content": cache.system_message}]
         token_count = cache.token_count
 
-        # 1. System message (cached)
-        messages.append({"role": "system", "content": cache.system_message})
-
-        # 2-4. Static context (cached)
-        messages.extend(cache.analyses_messages)
-        messages.extend(cache.garmin_messages)
-        messages.extend(cache.hevy_messages)
-
-        # 5. Chat history (always fresh - it grows each message).
+        # Chat history (always fresh - it grows each message).
         # Walk newest-first so that when history exceeds the budget we drop the
         # OLDEST turns and keep the most recent ones (including the question the
         # user just asked), then restore chronological order for the model.
-        chat_messages = self.repo.get_chat_history(limit=100)
+        chat_messages = self.repo.get_chat_history(limit=self.CHAT_HISTORY_LIMIT)
         kept: list[dict] = []
         for msg in reversed(chat_messages):
             msg_tokens = msg.token_estimate or len(msg.content) // 4
@@ -431,10 +396,10 @@ class ChatSession:
         Returns:
             Formatted string for context
         """
-        parts = ["Here are my recent fitness analyses for context:\n"]
+        parts = ["## Recent Daily Analyses\n"]
 
         for analysis in analyses:
-            parts.append(f"\n## Analysis from {analysis['date']}\n")
+            parts.append(f"\n### Analysis from {analysis['date']}\n")
             # Truncate long analyses to save tokens
             content = analysis["content"]
             if len(content) > 3000:
@@ -658,8 +623,8 @@ class ChatSession:
         Returns:
             Dict with context statistics including cache status
         """
-        analyses = self.get_historical_analyses(days=7)
-        chat_messages = self.repo.get_chat_history(limit=100)
+        analyses = self.get_historical_analyses(days=self.ANALYSES_CONTEXT_DAYS)
+        chat_messages = self.repo.get_chat_history(limit=self.CHAT_HISTORY_LIMIT)
         token_total = self.repo.get_chat_token_total()
         hevy_workouts = self.repo.get_hevy_workout_details(days=7)
 
