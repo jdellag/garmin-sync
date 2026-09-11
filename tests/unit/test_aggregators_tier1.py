@@ -1,7 +1,7 @@
 """Tests for Tier 1 analytics — cadence, VO2 max, elevation, sleep
 respiration, body battery patterns, training effect balance."""
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -507,11 +507,14 @@ class TestTrainingLoadAnalysisEnriched:
 class TestCardioPerformanceTool:
     @pytest.fixture(autouse=True)
     def _seed(self, repo):
+        # get_cardio_performance uses a rolling window ending today, so the
+        # seeded activity must be date-relative or the test rots over time.
+        recent = (date.today() - timedelta(days=3)).isoformat()
         activities = [
             Activity(
                 activity_id="cp1",
                 activity_type="running",
-                start_time="2026-05-15T07:00:00Z",
+                start_time=f"{recent}T07:00:00Z",
                 duration_seconds=3600,
                 distance_meters=10000,
                 avg_cadence=174.0,
