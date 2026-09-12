@@ -8,7 +8,7 @@ garmin-sync includes an AI fitness coach powered by OpenAI that can query your d
 garmin-sync analyze chat
 ```
 
-The coach pre-loads your recent activities, HEVY workouts, and past analyses as context. When you ask about specific data, it calls tools dynamically to fetch what it needs.
+The coach's system message carries reference data: your last 7 days of activities and HEVY workouts, plus the 2 most recent daily analyses. The 30 most recent chat messages carry over between sessions (`/clear` wipes them). When you ask about anything beyond that, it calls tools dynamically to fetch what it needs.
 
 **Example questions:**
 - "How has my bench press progressed over the last 3 months?"
@@ -38,6 +38,8 @@ garmin-sync analyze
 
 Runs a single daily analysis covering the last 7 days of data and saves the output to `reports/analysis-YYYY-MM-DD.md`. This is what the scheduled sync runs automatically.
 
+The report has three sections — **Today's call** (opening with a one-line `Today: <recommendation>`), **Why**, and **Week ahead** — and stays under ~450 words. For continuity the prompt includes a one-line verdict list from the last 7 reports plus yesterday's full analysis (not a week of full reports, which made the coach anchor on its own prior caution). After 3+ consecutive easy/rest verdicts, the coach must prescribe a structured deload or name concrete criteria for resuming normal training instead of defaulting to another easy day.
+
 ## Longitudinal review
 
 ```bash
@@ -62,19 +64,20 @@ Output saved to `reports/longitudinal-YYYY-MM-DD.md`.
 garmin-sync analyze anomalies
 ```
 
-Scans for 10 health and training anomalies:
-- HRV crash (significant drop from baseline)
-- RHR spike (elevated resting heart rate)
-- Training overload (high acute:chronic ratio)
+Scans for 9 health and training anomalies:
+- HRV crash (7-day mean meaningfully below baseline, personalized to your own variability)
+- RHR spike (>5 bpm above your 28-day baseline)
+- Training overload (rapid load ramp, A:C > 1.5)
+- Reduced load / detraining (A:C < 0.8 — informational, intentional if tapering)
 - Strength overload (strength-specific A:C spike)
-- Sleep degradation (declining quality or duration)
-- Body battery depletion (poor overnight recovery)
-- SpO2 drop (blood oxygen below threshold)
-- Stress elevation (sustained high stress scores)
-- Training monotony (low variation in training stimulus)
-- Detraining risk (declining load without recovery purpose)
+- Sleep degradation (3+ consecutive nights more than 1σ below your personal mean)
+- Body battery depletion (morning start below 25 for 2+ days)
+- Overreaching (RPE rising while volume is flat or falling)
+- SpO2 concern (weekly sleep average below 92%)
 
-Results are sorted by severity (critical, warning, info).
+Results are sorted by severity (critical, warning, info). This is the single
+alert layer: the same anomalies are embedded in `get_recovery_status` tool
+output and in the daily analysis prompt.
 
 ## Computed analytics
 
