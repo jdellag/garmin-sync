@@ -51,7 +51,7 @@ See [Getting Started](docs/getting-started.md) for a full walkthrough.
 | [Getting Started](docs/getting-started.md) | Installation, setup, first sync |
 | [CLI Reference](docs/cli-reference.md) | All commands and flags |
 | [AI Chat & Analysis](docs/ai-chat.md) | Interactive coaching, analysis reports, computed analytics |
-| [MCP Integration](docs/mcp-integration.md) | Claude Desktop setup, 12 available tools |
+| [MCP Integration](docs/mcp-integration.md) | Claude Desktop setup, 9 available tools |
 | [HEVY Integration](docs/hevy-integration.md) | Strength training, volume tracking, set targets |
 | [Configuration](docs/configuration.md) | TOML files, environment variables, data paths |
 | [Scheduling](docs/scheduling.md) | Automatic daily sync (macOS/Windows) |
@@ -70,7 +70,7 @@ For a complete security overview, see [SECURITY.md](SECURITY.md).
 
 ```bash
 pip install -e ".[dev]"
-pytest                           # 686 tests
+pytest                           # 690 tests
 pytest --cov=garmin_sync         # With coverage
 ruff check src/                  # Lint
 ```

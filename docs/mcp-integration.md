@@ -23,8 +23,8 @@ All 9 tools are available in both MCP (Claude Desktop) and OpenAI chat. They sha
 |------|-------------|------------|
 | `get_recent_activities` | Activities with duration, HR, training load, HR drift, cadence, VO2 max, max speed (best pace for runs) | `days` (default 7), `activity_type`, `limit` (default 20) |
 | `get_recovery_status` | HRV, sleep, body battery, RHR, training readiness, anomalies | None |
-| `get_training_load_analysis` | Combined cardio+strength A:C ratio, cardio/strength load breakdown, risk assessment | None |
-| `get_cardio_performance` | Running cadence, VO2 max progression, elevation, training effect, pacing | `days` (default 28) |
+| `get_training_load_analysis` | Acute vs chronic load with a descriptive load-ramp label (not injury risk), cardio/strength breakdown, training-effect balance | None |
+| `get_cardio_performance` | Running cadence, VO2 max progression, elevation, pacing consistency | `days` (default 28) |
 | `get_strength_training_summary` | HEVY sessions, volume, sets by muscle group (actual/target), RPE, PRs; set-by-set detail with `include_sets` | `days` (default 7), `include_sets` (default false) |
 | `get_exercise_progression` | Estimated 1RM over time with RPE trend for a specific lift | `exercise_name` (required), `days` (default 90) |
 | `get_weekly_comparison` | This week vs last week, month-to-date, personal records | None |
