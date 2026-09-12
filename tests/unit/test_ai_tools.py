@@ -181,10 +181,12 @@ class TestToolExecutor:
         assert result[0]["name"] == "Morning Run"
         assert result[0]["type"] == "running"
         # Should have calculated pace for running
-        assert "pace_min_per_km" in result[0]
-        # Max speed exposed as km/h and best pace (min/km) for runs
-        assert result[0]["max_speed_kmh"] == pytest.approx(14.9, abs=0.05)
-        assert result[0]["best_pace_min_per_km"] == pytest.approx(4.04, abs=0.01)
+        assert "pace_min_per_mile" in result[0]
+        # Max speed exposed as mph and best pace (min/mi) for runs
+        assert result[0]["max_speed_mph"] == pytest.approx(9.2, abs=0.05)
+        assert result[0]["best_pace_min_per_mile"] == pytest.approx(6.49, abs=0.01)
+        # Distance presented in miles (10000 m = 6.21 mi)
+        assert result[0]["distance_miles"] == pytest.approx(6.21, abs=0.01)
 
     def test_get_recovery_status(self, executor):
         """Test get_recovery_status aggregates metrics."""

@@ -5,11 +5,16 @@ from datetime import date, timedelta
 from typing import Any
 
 from garmin_sync.db.repository import Repository
+from garmin_sync.units import (
+    KG_TO_LBS,
+    meters_to_feet,
+    meters_to_miles,
+    mps_to_mph,
+    pace_sec_per_mile,
+)
 from garmin_sync.reports.aggregators import DataAggregator
 
 logger = logging.getLogger(__name__)
-
-KG_TO_LBS = 2.20462
 
 # HEVY-controlled free-text fields. Tool results flow to the LLM as raw JSON
 # (no <hevy_*> wrapper), so sanitize these at the executor boundary to give the
@@ -469,12 +474,12 @@ class ToolExecutor:
             "month_to_date": {
                 "activities": mtd_activities.total_count,
                 "duration_hours": mtd_activities.total_duration_hours,
-                "distance_km": mtd_activities.total_distance_km,
+                "distance_miles": round(mtd_activities.total_distance_miles, 1),
             },
             "previous_month": {
                 "activities": prev_activities.total_count,
                 "duration_hours": prev_activities.total_duration_hours,
-                "distance_km": prev_activities.total_distance_km,
+                "distance_miles": round(prev_activities.total_distance_miles, 1),
             },
             "prs_this_week": (
                 self.repo.get_recent_prs(days=7)
@@ -561,10 +566,10 @@ class ToolExecutor:
                 "values": vo2.get("values", []),
             },
             "elevation": {
-                "total_gain_meters": elevation.get("total_gain_meters"),
-                "total_loss_meters": elevation.get("total_loss_meters"),
+                "total_gain_ft": elevation.get("total_gain_ft"),
+                "total_loss_ft": elevation.get("total_loss_ft"),
                 "total_activities": elevation.get("total_activities", 0),
-                "vert_per_hour": elevation.get("vert_per_hour"),
+                "vert_ft_per_hour": elevation.get("vert_ft_per_hour"),
                 "by_type": elevation.get("by_activity_type", {}),
             },
         }
@@ -623,9 +628,12 @@ class ToolExecutor:
                 "start_time": act.start_time,
                 "start_time_local": act.start_time_local,
                 "duration_seconds": act.duration_seconds,
-                "distance_meters": act.distance_meters,
-                "max_speed_kmh": (
-                    round(act.max_speed_mps * 3.6, 1) if act.max_speed_mps else None
+                "distance_miles": (
+                    round(meters_to_miles(act.distance_meters), 2)
+                    if act.distance_meters else None
+                ),
+                "max_speed_mph": (
+                    round(mps_to_mph(act.max_speed_mps), 1) if act.max_speed_mps else None
                 ),
                 "average_hr": act.average_hr,
                 "max_hr": act.max_hr,
@@ -634,7 +642,10 @@ class ToolExecutor:
                 "training_effect_aerobic": act.training_effect_aerobic,
                 "training_effect_anaerobic": act.training_effect_anaerobic,
                 "hr_drift": act.hr_drift,
-                "elevation_gain_meters": act.elevation_gain_meters,
+                "elevation_gain_ft": (
+                    round(meters_to_feet(act.elevation_gain_meters))
+                    if act.elevation_gain_meters is not None else None
+                ),
                 "avg_cadence": act.avg_cadence,
                 "max_cadence": act.max_cadence,
                 "vo2_max": act.vo2_max,
@@ -644,10 +655,12 @@ class ToolExecutor:
                 "running", "treadmill_running", "trail_running"
             ):
                 if act.distance_meters and act.duration_seconds:
-                    pace_sec_per_km = act.duration_seconds / (act.distance_meters / 1000)
-                    data["pace_min_per_km"] = round(pace_sec_per_km / 60, 2)
+                    sec_per_mile = pace_sec_per_mile(act.duration_seconds, act.distance_meters)
+                    data["pace_min_per_mile"] = round(sec_per_mile / 60, 2)
                 if act.max_speed_mps and act.max_speed_mps > 0:
-                    data["best_pace_min_per_km"] = round((1000 / act.max_speed_mps) / 60, 2)
+                    data["best_pace_min_per_mile"] = round(
+                        pace_sec_per_mile(1, act.max_speed_mps) / 60, 2
+                    )
 
             # Add splits summary for activities with FIT-parsed split data
             if getattr(act, "fit_parsed", False):

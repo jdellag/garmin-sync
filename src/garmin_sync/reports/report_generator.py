@@ -103,8 +103,8 @@ class ReportGenerator:
             lines.append(f"\n## Activities: {activities.total_count}")
             for act_type, stats in activities.by_type.items():
                 duration_min = stats["duration_seconds"] / 60
-                distance_km = stats["distance_meters"] / 1000
-                lines.append(f"- {act_type.title()}: {duration_min:.0f}min, {distance_km:.1f}km")
+                distance_miles = stats["distance_meters"] / 1609.344
+                lines.append(f"- {act_type.title()}: {duration_min:.0f}min, {distance_miles:.1f}mi")
 
         lines.append("\n## Health")
         if health.total_steps:

@@ -13,6 +13,7 @@ A command-line tool that syncs your Garmin Connect and HEVY fitness data locally
 - **Cross-Platform Scheduling** -- Automatic daily sync via launchd (macOS) or Task Scheduler (Windows)
 - **Smart Sync** -- Skips unchanged daily metrics to save API calls (`--dry-run` to preview, `--force` to override)
 - **Local Storage** -- All data in a SQLite database you control (see [SECURITY.md](SECURITY.md))
+- **Imperial Units** -- Reports, chat, and tool output use miles, mph, min/mile, feet, and lbs (the database and raw exports keep Garmin's native SI units)
 
 ## Installation
 

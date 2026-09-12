@@ -173,7 +173,7 @@ def build_analysis_prompt(
         "- **Training Readiness**: Garmin's own 0-100 composite; its weakest component is what to prioritize.",
         "- **HR Drift**: >5% on a steady run suggests aerobic fatigue.",
         "- **Strength**: volume in lbs; weekly sets shown as actual/target per muscle group; RPE 1-10 self-reported (rising RPE at flat volume = overreaching sign); est. 1RM via Epley.",
-        "- **Cardio performance**: cadence (spm), VO2 max trend (±1.0 is meaningful), elevation vert/hour — background context, not daily decision drivers.",
+        "- **Cardio performance**: cadence (spm), VO2 max trend (±1.0 is meaningful), elevation vert ft/hour — background context, not daily decision drivers.",
         "- **Watch items**: sleep SpO2 <94% avg or a rising sleep respiration trend can signal illness — mention only if present.",
         "",
         "## 30-Day Baseline Metrics",
@@ -189,7 +189,7 @@ def build_analysis_prompt(
     ])
 
     # Add strength training data if available
-    kg_to_lbs = 2.20462
+    from garmin_sync.units import KG_TO_LBS as kg_to_lbs
     if strength_data and strength_data.get("total_sessions", 0) > 0:
         total_volume_lbs = strength_data.get("total_volume_kg", 0) * kg_to_lbs
         prompt_parts.extend([
@@ -309,12 +309,12 @@ def _format_aerobic(data: dict) -> list[str]:
     if not periods:
         parts.append("- No running activities with HR data in range.")
         return parts
-    parts.append("| Period | Runs | Total km | Avg pace (min/km) | Avg HR | m/heartbeat |")
+    parts.append("| Period | Runs | Total mi | Avg pace (min/mi) | Avg HR | m/heartbeat |")
     parts.append("|---|---|---|---|---|---|")
     for p in periods:
         parts.append(
-            f"| {p['label']} | {p['run_count']} | {p['total_km']} | "
-            f"{p.get('avg_pace_min_per_km')} | {p.get('avg_hr')} | "
+            f"| {p['label']} | {p['run_count']} | {p['total_miles']} | "
+            f"{p.get('avg_pace_min_per_mile')} | {p.get('avg_hr')} | "
             f"{p.get('meters_per_beat')} |"
         )
     return parts
@@ -344,7 +344,7 @@ def _format_volume(data: dict) -> list[str]:
     if not periods:
         parts.append("- No activities in range.")
         return parts
-    parts.append("| Period | Total hrs | Total km | Weekly-hours CoV | Active weeks | Top sports |")
+    parts.append("| Period | Total hrs | Total mi | Weekly-hours CoV | Active weeks | Top sports |")
     parts.append("|---|---|---|---|---|---|")
     for p in periods:
         by_type = p.get("by_type", {})
@@ -354,7 +354,7 @@ def _format_volume(data: dict) -> list[str]:
         )[:3]
         top_str = ", ".join(f"{t} {h:.0f}h" for t, h in top)
         parts.append(
-            f"| {p['label']} | {p['total_hours']} | {p['total_km']} | "
+            f"| {p['label']} | {p['total_hours']} | {p['total_miles']} | "
             f"{p.get('weekly_hours_cov')} | {p.get('weeks_with_activity')} | {top_str} |"
         )
     return parts
@@ -477,7 +477,7 @@ def generate_baseline_summary(
         "activities": {
             "total_count": summary.get("activities"),
             "duration_hours": summary.get("duration_hours"),
-            "distance_km": summary.get("distance_km"),
+            "distance_miles": summary.get("distance_miles"),
         },
         "hrv": {
             "baseline_28d": recovery.get("hrv", {}).get("baseline_28d"),
@@ -568,8 +568,8 @@ def generate_detailed_7d(
             "cadence_avg": cardio.get("cadence", {}).get("avg"),
             "vo2_max_current": cardio.get("vo2_max", {}).get("current"),
             "vo2_max_trend": cardio.get("vo2_max", {}).get("trend"),
-            "elevation_gain_meters": cardio.get("elevation", {}).get("total_gain_meters"),
-            "vert_per_hour": cardio.get("elevation", {}).get("vert_per_hour"),
+            "elevation_gain_ft": cardio.get("elevation", {}).get("total_gain_ft"),
+            "vert_ft_per_hour": cardio.get("elevation", {}).get("vert_ft_per_hour"),
         },
         "daily_hrv": recovery.get("hrv", {}).get("daily", []),
         "daily_sleep": recovery.get("sleep", {}).get("daily", []),

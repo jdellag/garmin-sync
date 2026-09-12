@@ -186,7 +186,7 @@ class TestPromptBuilder:
             "summary": {
                 "activities": 10,
                 "duration_hours": 8.5,
-                "distance_km": 50.0,
+                "distance_miles": 31.1,
             },
             "recovery": {
                 "hrv": {
@@ -349,7 +349,7 @@ class TestAIIntegration:
 
         # Build mock weekly data
         weekly_json = {
-            "summary": {"activities": 5, "duration_hours": 6.0, "distance_km": 40.0},
+            "summary": {"activities": 5, "duration_hours": 6.0, "distance_miles": 24.9},
             "recovery": {
                 "hrv": {"baseline_28d": 45, "baseline_7d": 46, "last_night": 48,
                         "delta_pct": 4.3, "days_below_baseline": 0, "status": "BALANCED",
@@ -610,8 +610,8 @@ class TestChatSessionCaching:
         assert cache.data_fingerprint is not None
 
         # Run context line includes best pace derived from max speed
-        # (4.13 m/s -> 1000/4.13 ≈ 242s ≈ 4:02/km)
-        assert "max 4:02/km" in sm
+        # (4.13 m/s -> 1609.344/4.13 ≈ 389.7s ≈ 6:29/mi)
+        assert "max 6:29/mi" in sm
 
     def test_fingerprint_equality(self):
         """Test DataFingerprint equality comparison."""

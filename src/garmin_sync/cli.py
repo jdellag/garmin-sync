@@ -940,7 +940,7 @@ def _get_today_activities_summary() -> str:
     """Get a summary of activities completed today.
 
     Returns:
-        String summary like "Morning: 5km easy run (45 min)" or "none"
+        String summary like "Morning: 3mi easy run (45 min)" or "none"
     """
     from garmin_sync.db.database import Database
     from garmin_sync.db.repository import Repository
@@ -967,8 +967,8 @@ def _get_today_activities_summary() -> str:
             parts.append("Activity")
 
         if act.distance_meters:
-            km = act.distance_meters / 1000
-            parts.append(f"({km:.1f} km)")
+            miles = act.distance_meters / 1609.344
+            parts.append(f"({miles:.1f} mi)")
 
         if act.duration_seconds:
             mins = int(act.duration_seconds / 60)
@@ -1895,7 +1895,7 @@ def hevy_status():
 
         for w in recent_workouts:
             workout_date = w["start_time"][:10] if w["start_time"] else "N/A"
-            volume_lbs = (w["volume_kg"] or 0) * 2.20462
+            volume_lbs = (w["volume_kg"] or 0) * KG_TO_LBS
             volume = f"{volume_lbs:,.0f}" if volume_lbs else "-"
             sets = str(w["set_count"]) if w["set_count"] else "-"
             workout_table.add_row(workout_date, w["title"] or "Untitled", volume, sets)
@@ -1905,7 +1905,7 @@ def hevy_status():
         console.print("[dim]No workouts synced yet.[/dim]")
 
 
-KG_TO_LBS = 2.20462
+from garmin_sync.units import KG_TO_LBS
 
 
 @hevy_app.command("volume")

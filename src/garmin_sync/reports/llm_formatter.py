@@ -6,6 +6,11 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+from garmin_sync.units import (
+    meters_to_miles,
+    mps_to_mph,
+    pace_sec_per_mile,
+)
 from garmin_sync.reports.aggregators import (
     ActivitySummary,
     DataAggregator,
@@ -30,13 +35,13 @@ def format_duration(seconds: float) -> str:
 
 
 def format_pace(meters: float, seconds: float) -> str:
-    """Format pace in min/km."""
+    """Format pace in min/mile."""
     if meters <= 0 or seconds <= 0:
         return "N/A"
-    pace_seconds_per_km = seconds / (meters / 1000)
-    mins = int(pace_seconds_per_km / 60)
-    secs = int(pace_seconds_per_km % 60)
-    return f"{mins}:{secs:02d}/km"
+    sec_per_mile = pace_sec_per_mile(seconds, meters)
+    mins = int(sec_per_mile / 60)
+    secs = int(sec_per_mile % 60)
+    return f"{mins}:{secs:02d}/mi"
 
 
 def format_change(value: Optional[float], higher_is_better: bool = True) -> str:
@@ -213,7 +218,7 @@ class LLMReportFormatter:
         metrics = [
             ("Activities", "activities", None, True),
             ("Duration", "duration_hours", "h", True),
-            ("Distance", "distance_km", "km", True),
+            ("Distance", "distance_miles", "mi", True),
             ("Calories", "calories", None, True),
             ("Avg Steps", "avg_steps", None, True),
             ("Avg Sleep", "avg_sleep_hours", "h", True),
@@ -246,7 +251,7 @@ class LLMReportFormatter:
             "## Quick Stats",
             f"- **Activities:** {activities.total_count}",
             f"- **Total Time:** {format_duration(activities.total_duration_seconds)}",
-            f"- **Distance:** {activities.total_distance_km:.1f} km",
+            f"- **Distance:** {activities.total_distance_miles:.1f} mi",
             f"- **Calories:** {activities.total_calories:,}",
         ]
 
@@ -265,19 +270,19 @@ class LLMReportFormatter:
         for activity_type, stats in activities.by_type.items():
             count = stats["count"]
             duration = format_duration(stats["duration_seconds"])
-            distance_km = stats["distance_meters"] / 1000
+            distance_miles = meters_to_miles(stats["distance_meters"])
 
-            if distance_km > 0.1:
+            if distance_miles > 0.06:
                 # Calculate pace for running/cycling
                 if stats["duration_seconds"] > 0:
-                    speed_kmh = distance_km / (stats["duration_seconds"] / 3600)
+                    speed_mph = distance_miles / (stats["duration_seconds"] / 3600)
                     if activity_type == "running":
                         pace = format_pace(stats["distance_meters"], stats["duration_seconds"])
-                        lines.append(f"- **{activity_type.title()}:** {count}x, {distance_km:.1f}km, {duration}, avg {pace}")
+                        lines.append(f"- **{activity_type.title()}:** {count}x, {distance_miles:.1f}mi, {duration}, avg {pace}")
                     else:
-                        lines.append(f"- **{activity_type.title()}:** {count}x, {distance_km:.1f}km, {duration}, avg {speed_kmh:.1f}km/h")
+                        lines.append(f"- **{activity_type.title()}:** {count}x, {distance_miles:.1f}mi, {duration}, avg {speed_mph:.1f}mph")
                 else:
-                    lines.append(f"- **{activity_type.title()}:** {count}x, {distance_km:.1f}km, {duration}")
+                    lines.append(f"- **{activity_type.title()}:** {count}x, {distance_miles:.1f}mi, {duration}")
             else:
                 lines.append(f"- **{activity_type.title()}:** {count}x, {duration}")
 
@@ -334,7 +339,7 @@ class LLMReportFormatter:
 
             parts = [name]
             if distance_m > 100:
-                parts.append(f"{distance_m/1000:.1f}km")
+                parts.append(f"{meters_to_miles(distance_m):.1f}mi")
             parts.append(duration)
 
             if activity.get("average_hr"):
@@ -958,7 +963,7 @@ class LLMReportFormatter:
         return {
             "activities": activities.total_count,
             "duration_hours": round(activities.total_duration_hours, 1),
-            "distance_km": round(activities.total_distance_km, 1),
+            "distance_miles": round(activities.total_distance_miles, 1),
             "calories": activities.total_calories,
             "avg_steps": health.avg_steps,
             "avg_sleep_hours": round(health.avg_sleep_hours, 1) if health.avg_sleep_hours else None,
@@ -992,7 +997,7 @@ class LLMReportFormatter:
             by_type[activity_type] = {
                 "count": stats["count"],
                 "duration_sec": int(stats["duration_seconds"]),
-                "distance_m": int(stats["distance_meters"]),
+                "distance_miles": round(meters_to_miles(stats["distance_meters"]), 1),
                 "avg_hr": stats.get("avg_hr"),
             }
 
@@ -1002,9 +1007,13 @@ class LLMReportFormatter:
                 "name": activity.get("activity_name") or activity.get("activity_type", "Activity"),
                 "type": activity.get("activity_type"),
                 "duration_sec": activity.get("duration_seconds"),
-                "distance_m": activity.get("distance_meters"),
-                "max_speed_kmh": (
-                    round(activity["max_speed_mps"] * 3.6, 1)
+                "distance_miles": (
+                    round(meters_to_miles(activity["distance_meters"]), 1)
+                    if activity.get("distance_meters")
+                    else None
+                ),
+                "max_speed_mph": (
+                    round(mps_to_mph(activity["max_speed_mps"]), 1)
                     if activity.get("max_speed_mps")
                     else None
                 ),
@@ -1279,8 +1288,8 @@ class LLMReportFormatter:
                 "data_points": 0,
             },
             "elevation": {
-                "total_gain_meters": None,
-                "total_loss_meters": None,
+                "total_gain_ft": None,
+                "total_loss_ft": None,
                 "total_activities": 0,
                 "vert_per_hour": None,
                 "by_type": {},
@@ -1311,10 +1320,10 @@ class LLMReportFormatter:
 
         if elevation:
             result["elevation"] = {
-                "total_gain_meters": elevation.get("total_gain_meters"),
-                "total_loss_meters": elevation.get("total_loss_meters"),
+                "total_gain_ft": elevation.get("total_gain_ft"),
+                "total_loss_ft": elevation.get("total_loss_ft"),
                 "total_activities": elevation.get("total_activities", 0),
-                "vert_per_hour": elevation.get("vert_per_hour"),
+                "vert_ft_per_hour": elevation.get("vert_ft_per_hour"),
                 "by_type": elevation.get("by_activity_type", {}),
             }
 
