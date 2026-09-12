@@ -18,8 +18,12 @@ from garmin_sync.ai.tools import TOOLS
 from garmin_sync.db.repository import Repository
 from garmin_sync.reports.aggregators import DataAggregator
 from garmin_sync.tools.executor import ToolExecutor
-
-KG_TO_LBS = 2.20462
+from garmin_sync.units import (
+    meters_to_feet,
+    meters_to_miles,
+    mps_to_mph,
+    pace_sec_per_mile,
+)
 
 # East Coast timezone (handles EST/EDT automatically)
 try:
@@ -289,8 +293,8 @@ class ChatSession:
                 parts.append("Activity")
 
             if act.distance_meters:
-                km = act.distance_meters / 1000
-                parts.append(f"({km:.1f} km)")
+                miles = meters_to_miles(act.distance_meters)
+                parts.append(f"({miles:.1f} mi)")
 
             if act.duration_seconds:
                 mins = int(act.duration_seconds / 60)
@@ -446,20 +450,18 @@ class ChatSession:
             distance_str = ""
             pace_str = ""
             if act.distance_meters and act.distance_meters > 0:
-                distance_km = act.distance_meters / 1000
-                if distance_km >= 1:
-                    distance_str = f"{distance_km:.1f} km"
+                distance_miles = meters_to_miles(act.distance_meters)
+                if distance_miles >= 1:
+                    distance_str = f"{distance_miles:.1f} mi"
                 else:
-                    distance_str = f"{int(act.distance_meters)} m"
+                    distance_str = f"{distance_miles:.2f} mi"
 
                 # Calculate pace for running/walking activities
                 if act.duration_seconds and act.activity_type in (
                     "running", "treadmill_running", "trail_running", "walking", "hiking"
                 ):
-                    pace_sec_per_km = act.duration_seconds / distance_km
-                    pace_mins = int(pace_sec_per_km // 60)
-                    pace_secs = int(pace_sec_per_km % 60)
-                    pace_str = f"pace {pace_mins}:{pace_secs:02d}/km"
+                    sec_mi = pace_sec_per_mile(act.duration_seconds, act.distance_meters)
+                    pace_str = f"pace {int(sec_mi // 60)}:{int(sec_mi % 60):02d}/mi"
 
             # Max speed → best instantaneous pace for run types
             best_str = ""
@@ -467,13 +469,13 @@ class ChatSession:
                 if act.activity_type in (
                     "running", "treadmill_running", "trail_running"
                 ):
-                    best_sec_per_km = 1000 / act.max_speed_mps
+                    best_sec_mi = pace_sec_per_mile(1, act.max_speed_mps)
                     best_str = (
-                        f"max {int(best_sec_per_km // 60)}:"
-                        f"{int(best_sec_per_km % 60):02d}/km"
+                        f"max {int(best_sec_mi // 60)}:"
+                        f"{int(best_sec_mi % 60):02d}/mi"
                     )
                 else:
-                    best_str = f"max {act.max_speed_mps * 3.6:.1f} km/h"
+                    best_str = f"max {mps_to_mph(act.max_speed_mps):.1f} mph"
 
             # Format heart rate (avg and max)
             hr_str = ""
@@ -501,7 +503,7 @@ class ChatSession:
             # Format elevation
             elev_str = ""
             if act.elevation_gain_meters and act.elevation_gain_meters > 10:
-                elev_str = f"elev +{int(act.elevation_gain_meters)}m"
+                elev_str = f"elev +{int(meters_to_feet(act.elevation_gain_meters))}ft"
 
             # Format cadence (for running)
             cadence_str = ""

@@ -52,11 +52,11 @@ class TestFormatFunctions:
         assert format_duration(7200) == "2h"
 
     def test_format_pace(self):
-        """Test pace formatting."""
-        # 5:00/km pace = 5000m in 25 minutes
-        assert format_pace(5000, 1500) == "5:00/km"
-        # 6:30/km pace
-        assert format_pace(1000, 390) == "6:30/km"
+        """Test pace formatting (min/mile)."""
+        # 1 mile in 8 minutes
+        assert format_pace(1609.344, 480) == "8:00/mi"
+        # 5000m in 25 min = 5:00/km = 8:02.8/mi (truncated seconds)
+        assert format_pace(5000, 1500) == "8:02/mi"
 
     def test_format_pace_invalid(self):
         """Test pace with invalid values."""
@@ -90,10 +90,10 @@ class TestActivitySummary:
         summary = ActivitySummary(total_duration_seconds=7200)
         assert summary.total_duration_hours == 2.0
 
-    def test_distance_km(self):
-        """Test distance km calculation."""
-        summary = ActivitySummary(total_distance_meters=10000)
-        assert summary.total_distance_km == 10.0
+    def test_distance_miles(self):
+        """Test distance miles calculation."""
+        summary = ActivitySummary(total_distance_meters=1609.344)
+        assert summary.total_distance_miles == pytest.approx(1.0)
 
 
 class TestHealthSummary:
@@ -1282,7 +1282,7 @@ class TestJSONReportGeneration:
         assert "summary" in result
         assert "activities" in result["summary"]
         assert "duration_hours" in result["summary"]
-        assert "distance_km" in result["summary"]
+        assert "distance_miles" in result["summary"]
         assert "calories" in result["summary"]
         assert "avg_steps" in result["summary"]
         assert "avg_sleep_hours" in result["summary"]
@@ -1313,12 +1313,12 @@ class TestJSONReportGeneration:
         running = result["activities"]["by_type"]["running"]
         assert "count" in running
         assert "duration_sec" in running
-        assert "distance_m" in running
+        assert "distance_miles" in running
 
         # Top sessions expose max speed in km/h
         top = result["activities"]["top_sessions"]
         assert top, "expected at least one top session"
-        assert top[0]["max_speed_kmh"] == pytest.approx(14.9, abs=0.05)
+        assert top[0]["max_speed_mph"] == pytest.approx(9.2, abs=0.05)
 
     def test_json_recovery_hrv_structure(self, db_with_comprehensive_data):
         """JSON recovery.hrv has all required fields."""
@@ -1698,8 +1698,8 @@ class TestJSONDataConsistency:
         assert summary["activities"] == 3
         # Total duration: 3600 + 1800 + 7200 = 12600 seconds = 3.5 hours
         assert summary["duration_hours"] == 3.5
-        # Total distance: 10000 + 5000 + 40000 = 55000 meters = 55 km
-        assert summary["distance_km"] == 55.0
+        # Total distance: 10000 + 5000 + 40000 = 55000 meters = 34.2 miles
+        assert summary["distance_miles"] == pytest.approx(34.2, abs=0.05)
         # Total calories: 500 + 250 + 800 = 1550
         assert summary["calories"] == 1550
         # Avg steps: 10000 per day
@@ -1714,15 +1714,15 @@ class TestJSONDataConsistency:
 
         by_type = result["activities"]["by_type"]
 
-        # Running: 2 activities, 5400 sec, 15000 m
+        # Running: 2 activities, 5400 sec, 15000 m = 9.3 miles
         assert by_type["running"]["count"] == 2
         assert by_type["running"]["duration_sec"] == 5400
-        assert by_type["running"]["distance_m"] == 15000
+        assert by_type["running"]["distance_miles"] == pytest.approx(9.3, abs=0.05)
 
         # Cycling: 1 activity, 7200 sec, 40000 m
         assert by_type["cycling"]["count"] == 1
         assert by_type["cycling"]["duration_sec"] == 7200
-        assert by_type["cycling"]["distance_m"] == 40000
+        assert by_type["cycling"]["distance_miles"] == pytest.approx(24.9, abs=0.05)
 
     def test_training_load_values_match_expected(self, db_with_known_data):
         """Training load values match expected totals."""
@@ -1914,7 +1914,7 @@ class TestLongitudinalAggregators:
 
         by_label = {p["label"]: p for p in result["periods"]}
         assert by_label["2024"]["meters_per_beat"] > by_label["2023"]["meters_per_beat"]
-        assert by_label["2024"]["avg_pace_min_per_km"] < by_label["2023"]["avg_pace_min_per_km"]
+        assert by_label["2024"]["avg_pace_min_per_mile"] < by_label["2023"]["avg_pace_min_per_mile"]
 
     def test_aerobic_efficiency_quarter_granularity(self, db_multi_year):
         """Quarter granularity should produce more buckets than year."""

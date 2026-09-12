@@ -65,7 +65,7 @@ garmin-sync sync all --days 1825    # ~5 years
 ## FIT files
 
 **Laps/splits missing for activities:**
-Run `garmin-sync sync fit-reparse` to re-process existing FIT files for laps, per-km splits, and HR drift.
+Run `garmin-sync sync fit-reparse` to re-process existing FIT files for laps, splits, and HR drift.
 
 ## HEVY
 

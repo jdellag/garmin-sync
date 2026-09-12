@@ -7,6 +7,13 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from garmin_sync.db.database import Database
+from garmin_sync.units import (
+    METERS_PER_MILE,
+    format_pace_mile,
+    meters_to_feet,
+    meters_to_miles,
+    sec_per_km_to_sec_per_mile,
+)
 
 
 @dataclass
@@ -28,8 +35,8 @@ class ActivitySummary:
         return self.total_duration_seconds / 3600
 
     @property
-    def total_distance_km(self) -> float:
-        return self.total_distance_meters / 1000
+    def total_distance_miles(self) -> float:
+        return meters_to_miles(self.total_distance_meters)
 
 
 @dataclass
@@ -352,7 +359,7 @@ class DataAggregator:
             current={
                 "activities": current_activities.total_count,
                 "duration_hours": current_activities.total_duration_hours,
-                "distance_km": current_activities.total_distance_km,
+                "distance_miles": round(current_activities.total_distance_miles, 1),
                 "calories": current_activities.total_calories,
                 "avg_steps": current_health.avg_steps,
                 "avg_sleep_hours": current_health.avg_sleep_hours,
@@ -361,7 +368,7 @@ class DataAggregator:
             previous={
                 "activities": prev_activities.total_count,
                 "duration_hours": prev_activities.total_duration_hours,
-                "distance_km": prev_activities.total_distance_km,
+                "distance_miles": round(prev_activities.total_distance_miles, 1),
                 "calories": prev_activities.total_calories,
                 "avg_steps": prev_health.avg_steps,
                 "avg_sleep_hours": prev_health.avg_sleep_hours,
@@ -1228,7 +1235,7 @@ class DataAggregator:
             }
 
         # Get recent workouts with exercise details
-        kg_to_lbs = 2.20462
+        from garmin_sync.units import KG_TO_LBS as kg_to_lbs
 
         def utc_to_local_date(utc_str: str) -> str | None:
             """Convert UTC timestamp to local date string."""
@@ -1444,13 +1451,13 @@ class DataAggregator:
             total_m = row["total_meters"] or 0
             total_s = row["total_seconds"] or 0
             hr_minutes = row["hr_minutes"] or 0
-            pace = (total_s / total_m * 1000 / 60) if total_m > 0 else None
+            pace = (total_s / total_m * METERS_PER_MILE / 60) if total_m > 0 else None
             mpb = (total_m / hr_minutes) if hr_minutes > 0 else None
             periods.append({
                 "label": row["label"],
                 "run_count": row["run_count"],
-                "total_km": round(total_m / 1000, 1) if total_m else 0.0,
-                "avg_pace_min_per_km": round(pace, 2) if pace else None,
+                "total_miles": round(meters_to_miles(total_m), 1) if total_m else 0.0,
+                "avg_pace_min_per_mile": round(pace, 2) if pace else None,
                 "avg_hr": round(row["avg_hr"], 1) if row["avg_hr"] else None,
                 "meters_per_beat": round(mpb, 2) if mpb else None,
             })
@@ -1562,16 +1569,16 @@ class DataAggregator:
             entry = by_period.setdefault(label, {
                 "label": label,
                 "total_hours": 0.0,
-                "total_km": 0.0,
+                "total_miles": 0.0,
                 "by_type": {},
             })
             hours = (row["total_seconds"] or 0) / 3600
-            km = (row["total_meters"] or 0) / 1000
+            miles = meters_to_miles(row["total_meters"] or 0)
             entry["total_hours"] += hours
-            entry["total_km"] += km
+            entry["total_miles"] += miles
             entry["by_type"][row["activity_type"]] = {
                 "hours": round(hours, 1),
-                "km": round(km, 1),
+                "miles": round(miles, 1),
                 "count": row["n"],
             }
 
@@ -1609,7 +1616,7 @@ class DataAggregator:
                 entry["weekly_hours_cov"] = None
             entry["weeks_with_activity"] = len(weekly)
             entry["total_hours"] = round(entry["total_hours"], 1)
-            entry["total_km"] = round(entry["total_km"], 1)
+            entry["total_miles"] = round(entry["total_miles"], 1)
 
         return {
             "granularity": granularity,
@@ -1808,16 +1815,16 @@ class DataAggregator:
             end_date: End date (inclusive)
 
         Returns:
-            Dict with total gain/loss, average per activity,
-            vertical metres per hour, and per-activity-type breakdown.
+            Dict with total gain/loss (feet), average per activity,
+            vertical feet per hour, and per-activity-type breakdown.
         """
         cursor = self.db.connection.cursor()
         result: dict = {
-            "total_gain_meters": None,
-            "total_loss_meters": None,
+            "total_gain_ft": None,
+            "total_loss_ft": None,
+            "avg_gain_ft_per_activity": None,
+            "vert_ft_per_hour": None,
             "total_activities": 0,
-            "avg_gain_per_activity": None,
-            "vert_per_hour": None,
             "by_activity_type": {},
         }
 
@@ -1843,31 +1850,31 @@ class DataAggregator:
         total_loss = sum(r["elevation_loss_meters"] or 0 for r in rows)
         total_duration_s = sum(r["duration_seconds"] or 0 for r in rows)
 
-        result["total_gain_meters"] = round(total_gain, 1)
-        result["total_loss_meters"] = round(total_loss, 1)
+        result["total_gain_ft"] = round(meters_to_feet(total_gain), 1)
+        result["total_loss_ft"] = round(meters_to_feet(total_loss), 1)
         result["total_activities"] = len(rows)
-        result["avg_gain_per_activity"] = round(total_gain / len(rows), 1)
+        result["avg_gain_ft_per_activity"] = round(meters_to_feet(total_gain) / len(rows), 1)
 
         total_hours = total_duration_s / 3600
         if total_hours > 0:
-            result["vert_per_hour"] = round(total_gain / total_hours, 1)
+            result["vert_ft_per_hour"] = round(meters_to_feet(total_gain) / total_hours, 1)
 
         # By activity type
         from collections import defaultdict
 
         by_type: dict[str, dict] = defaultdict(
-            lambda: {"gain": 0.0, "loss": 0.0, "count": 0}
+            lambda: {"gain_ft": 0.0, "loss_ft": 0.0, "count": 0}
         )
         for row in rows:
             at = row["activity_type"] or "unknown"
-            by_type[at]["gain"] += row["elevation_gain_meters"]
-            by_type[at]["loss"] += row["elevation_loss_meters"] or 0
+            by_type[at]["gain_ft"] += meters_to_feet(row["elevation_gain_meters"])
+            by_type[at]["loss_ft"] += meters_to_feet(row["elevation_loss_meters"] or 0)
             by_type[at]["count"] += 1
 
         for at, data in by_type.items():
             result["by_activity_type"][at] = {
-                "gain": round(data["gain"], 1),
-                "loss": round(data["loss"], 1),
+                "gain_ft": round(data["gain_ft"], 1),
+                "loss_ft": round(data["loss_ft"], 1),
                 "count": data["count"],
             }
 
@@ -2178,7 +2185,7 @@ class DataAggregator:
             current={
                 "activities": current_activities.total_count,
                 "duration_hours": current_activities.total_duration_hours,
-                "distance_km": current_activities.total_distance_km,
+                "distance_miles": round(current_activities.total_distance_miles, 1),
                 "calories": current_activities.total_calories,
                 "avg_steps": current_health.avg_steps,
                 "avg_sleep_hours": current_health.avg_sleep_hours,
@@ -2187,7 +2194,7 @@ class DataAggregator:
             previous={
                 "activities": prev_activities.total_count,
                 "duration_hours": prev_activities.total_duration_hours,
-                "distance_km": prev_activities.total_distance_km,
+                "distance_miles": round(prev_activities.total_distance_miles, 1),
                 "calories": prev_activities.total_calories,
                 "avg_steps": prev_health.avg_steps,
                 "avg_sleep_hours": prev_health.avg_sleep_hours,
@@ -2241,7 +2248,7 @@ class DataAggregator:
             result["longest_distance"] = {
                 "name": row["activity_name"],
                 "type": row["activity_type"],
-                "distance_km": round(row["distance_meters"] / 1000, 2),
+                "distance_miles": round(meters_to_miles(row["distance_meters"]), 2),
                 "date": row["act_date"],
             }
 
@@ -2584,14 +2591,15 @@ class DataAggregator:
         )
         rows = cursor.fetchall()
 
-        KG_TO_LBS = 2.20462
+        from garmin_sync.units import KG_TO_LBS as kg_to_lbs
+
         prs = []
         for row in rows:
             prs.append({
                 "category": "strength",
                 "exercise_name": row["exercise_name"],
                 "muscle_group": row["muscle_group"],
-                "weight_lbs": round((row["weight_kg"] or 0) * KG_TO_LBS),
+                "weight_lbs": round((row["weight_kg"] or 0) * kg_to_lbs),
                 "reps": row["reps"],
                 "date": row["start_time"][:10] if row["start_time"] else None,
                 "workout_title": row["workout_title"],
@@ -2638,9 +2646,9 @@ class DataAggregator:
         else:
             is_negative = False
 
-        def _fmt_pace(secs: float) -> str:
-            m, s = divmod(int(secs), 60)
-            return f"{m}:{s:02d}/km"
+        def _fmt_pace(sec_per_km: float) -> str:
+            # Stored splits are per-km; present pace per mile.
+            return format_pace_mile(sec_per_km_to_sec_per_mile(sec_per_km))
 
         fastest = min(full_splits, key=lambda s: s.get("pace_seconds_per_km", 9999))
         slowest = max(full_splits, key=lambda s: s.get("pace_seconds_per_km", 0))
@@ -2648,7 +2656,7 @@ class DataAggregator:
         return {
             "split_count": len(full_splits),
             "avg_pace": _fmt_pace(avg_pace),
-            "avg_pace_seconds": round(avg_pace, 1),
+            "avg_pace_sec_per_mile": round(sec_per_km_to_sec_per_mile(avg_pace), 1),
             "pace_cov": round(cov, 4),
             "is_negative_split": is_negative,
             "fastest_split": {
@@ -2661,7 +2669,7 @@ class DataAggregator:
             },
             "splits": [
                 {
-                    "km": s["split_index"],
+                    "split": s["split_index"],
                     "pace": _fmt_pace(s["pace_seconds_per_km"]) if s.get("pace_seconds_per_km") else None,
                     "hr": s.get("avg_heart_rate"),
                 }

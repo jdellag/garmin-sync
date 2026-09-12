@@ -228,31 +228,34 @@ class TestElevationSummary:
 
     def test_totals(self, agg):
         result = agg.get_elevation_summary(date(2026, 5, 10), date(2026, 5, 20))
-        assert result["total_gain_meters"] == pytest.approx(1200.0, abs=0.1)
-        assert result["total_loss_meters"] == pytest.approx(1150.0, abs=0.1)
+        # 1200 m gain / 1150 m loss, presented in feet
+        assert result["total_gain_ft"] == pytest.approx(1200.0 * 3.28084, abs=0.5)
+        assert result["total_loss_ft"] == pytest.approx(1150.0 * 3.28084, abs=0.5)
         assert result["total_activities"] == 3
 
     def test_avg_gain_per_activity(self, agg):
         result = agg.get_elevation_summary(date(2026, 5, 10), date(2026, 5, 20))
-        assert result["avg_gain_per_activity"] == pytest.approx(400.0, abs=0.1)
+        assert result["avg_gain_ft_per_activity"] == pytest.approx(400.0 * 3.28084, abs=0.5)
 
     def test_vert_per_hour(self, agg):
         result = agg.get_elevation_summary(date(2026, 5, 10), date(2026, 5, 20))
-        # 1200m gain / (16200s / 3600) = 1200 / 4.5 = 266.7 m/h
+        # 1200m gain over 4.5h = 266.7 m/h → presented in ft/h
         total_hours = (3600 + 7200 + 5400) / 3600
-        expected = 1200.0 / total_hours
-        assert result["vert_per_hour"] == pytest.approx(expected, abs=0.5)
+        expected = 1200.0 * 3.28084 / total_hours
+        assert result["vert_ft_per_hour"] == pytest.approx(expected, abs=1.0)
 
     def test_by_activity_type(self, agg):
         result = agg.get_elevation_summary(date(2026, 5, 10), date(2026, 5, 20))
         assert "running" in result["by_activity_type"]
         assert "cycling" in result["by_activity_type"]
-        assert result["by_activity_type"]["running"]["gain"] == pytest.approx(200.0)
+        assert result["by_activity_type"]["running"]["gain_ft"] == pytest.approx(
+            200.0 * 3.28084, abs=0.5
+        )
         assert result["by_activity_type"]["cycling"]["count"] == 1
 
     def test_empty_data(self, agg):
         result = agg.get_elevation_summary(date(2020, 1, 1), date(2020, 1, 7))
-        assert result["total_gain_meters"] is None
+        assert result["total_gain_ft"] is None
         assert result["total_activities"] == 0
 
 
@@ -561,7 +564,7 @@ class TestCardioPerformanceTool:
 
         executor = ToolExecutor(repo, agg)
         result = executor.get_cardio_performance(days=28)
-        assert result["elevation"]["total_gain_meters"] == pytest.approx(150.0)
+        assert result["elevation"]["total_gain_ft"] == pytest.approx(150.0 * 3.28084, abs=0.5)
 
     def test_execute_dispatch(self, repo, agg):
         from garmin_sync.tools.executor import ToolExecutor

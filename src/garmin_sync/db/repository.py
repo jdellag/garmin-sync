@@ -1356,7 +1356,7 @@ class Repository:
             (start_date,)
         )
         workouts = []
-        kg_to_lbs = 2.20462
+        from garmin_sync.units import KG_TO_LBS as kg_to_lbs
 
         def utc_to_local(utc_str: str) -> tuple[str, str]:
             """Convert UTC timestamp to local date and time.

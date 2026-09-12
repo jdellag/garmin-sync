@@ -280,7 +280,8 @@ class TestMonthlyBestActivities:
             date(2026, 5, 1), date(2026, 5, 31)
         )
         assert result["longest_distance"]["name"] == "Long Run"
-        assert result["longest_distance"]["distance_km"] == 21.0
+        # 21 km presented in miles
+        assert result["longest_distance"]["distance_miles"] == pytest.approx(13.05, abs=0.01)
         assert result["highest_training_load"]["name"] == "Interval Session"
         assert result["highest_training_load"]["training_load"] == 150.0
         assert result["best_aerobic_efficiency"]["name"] == "Easy Run"
