@@ -10,6 +10,8 @@ garmin-sync analyze chat
 
 The coach's system message carries reference data: your last 7 days of activities and HEVY workouts, plus the 2 most recent daily analyses. The 30 most recent chat messages carry over between sessions (`/clear` wipes them). When you ask about anything beyond that, it calls tools dynamically to fetch what it needs.
 
+Conversation history is replayed with its dates. Each earlier session is marked with when it started, and right before your newest message the coach is told the current time, how long ago those sessions were, and when your data last synced. So "today" in a message you sent on Friday is read as Friday. A session ends after a two-hour gap or at midnight.
+
 **Example questions:**
 - "How has my bench press progressed over the last 3 months?"
 - "What's my recovery status today?"
@@ -38,7 +40,17 @@ garmin-sync analyze
 
 Runs a single daily analysis covering the last 7 days of data and saves the output to `reports/analysis-YYYY-MM-DD.md`. This is what the scheduled sync runs automatically.
 
-The report has three sections — **Today's call** (opening with a one-line `Today: <recommendation>`), **Why**, and **Week ahead** — and stays under ~450 words. For continuity the prompt includes a one-line verdict list from the last 7 reports plus yesterday's full analysis (not a week of full reports, which made the coach anchor on its own prior caution). After 3+ consecutive easy/rest verdicts, the coach must prescribe a structured deload or name concrete criteria for resuming normal training instead of defaulting to another easy day.
+The report has three sections — **Today's call** (opening with a one-line `Today: <recommendation>`), **Why**, and **Week ahead** (one bullet per day, labeled with weekday and date) — and stays under ~450 words.
+
+Every date the coach sees is computed in code. The prompt names today and tomorrow, maps your weekly schedule onto this week's dates, and flags data that isn't final yet: today's resting HR while the day is in progress, and nights with no recorded sleep.
+
+Continuity with earlier reports is also built in code rather than by re-reading them:
+- the recent one-line daily calls
+- the activity you actually recorded since the last report
+- that report's plan, with each day resolved to a date
+- any values Garmin revised after that report ran (for example, a mid-morning resting HR that later settled lower)
+
+Each report saves the numbers it used to `reports/analysis-YYYY-MM-DD.json` for that comparison. After 3+ consecutive easy or rest calls your schedule didn't already call for, the coach must prescribe a structured deload or name concrete criteria for resuming normal training. That rule never adds training to a scheduled rest day.
 
 ## Longitudinal review
 

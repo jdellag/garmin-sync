@@ -2,8 +2,10 @@
 
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
+
+from garmin_sync import temporal
 
 logger = logging.getLogger(__name__)
 
@@ -82,51 +84,97 @@ def process_template(
     return result
 
 
+def _data_notes(
+    detailed_7d: dict[str, Any], current_date: date, generated_at: datetime | None
+) -> list[str]:
+    """Plain-language warnings about incomplete data, computed in code."""
+    notes: list[str] = []
+    today_label = temporal.day_label(current_date, current_date)
+    as_of = f" (as of {temporal.clock_time(generated_at)})" if generated_at is not None else ""
+
+    if any(row.get("provisional") for row in detailed_7d.get("daily_rhr") or []):
+        notes.append(f"Resting HR for {today_label} is provisional: the day is still in progress{as_of}.")
+    if any(row.get("provisional") for row in detailed_7d.get("daily_training_load") or []):
+        notes.append(f"Training load for {today_label} counts only activities recorded so far{as_of}.")
+
+    sleep_hours = {row.get("date"): row.get("hours") for row in detailed_7d.get("daily_sleep") or []}
+    if sleep_hours:
+        for offset in (0, 1):
+            night_end = current_date - timedelta(days=offset)
+            if sleep_hours.get(night_end.isoformat()) is None:
+                notes.append(
+                    "No sleep recorded for the night ending "
+                    f"{temporal.day_label(night_end, current_date)}; HRV and resting HR "
+                    "for that date may be unreliable."
+                )
+    return notes
+
+
 def build_analysis_prompt(
     baseline_30d: dict[str, Any],
     detailed_7d: dict[str, Any],
     current_date: date,
     user_schedule: str,
     user_context: str,
-    yesterday_analysis: str | None = None,
-    recent_verdicts: list[str] | None = None,
+    continuity: str | None = None,
     timezone: str = "America/New_York",
     completed_today: str | None = None,
     strength_data: dict[str, Any] | None = None,
+    generated_at: datetime | None = None,
 ) -> str:
     """Build the analysis prompt for OpenAI.
+
+    Date arithmetic happens in code (``garmin_sync.temporal``), not in the
+    model: the prompt names today and tomorrow, maps the weekly schedule onto
+    real dates, and flags provisional or missing data.
 
     Args:
         baseline_30d: 30-day baseline summary metrics
         detailed_7d: Detailed 7-day data with daily breakdowns
-        current_date: Current date for context
+        current_date: Date the report is for (in the configured timezone)
         user_schedule: User's typical weekly training schedule (supports template variables)
         user_context: Additional user context (supports template variables)
-        yesterday_analysis: Yesterday's analysis text (truncated; for continuity)
-        recent_verdicts: One-line "date: verdict" strings from prior reports,
-            oldest first — lets the model spot its own repeated-caution loops
-            without re-reading a week of its own prose
+        continuity: Section from ``report_history.build_continuity_section``:
+            recent calls, recorded activity, the previous plan with dates
+            resolved, and values revised since the previous report
         timezone: Timezone for template variable processing
         completed_today: Summary of activities completed today for template
         strength_data: Optional HEVY strength training data
+        generated_at: When the report is being generated, for "as of" notes
 
     Returns:
         Formatted prompt string for OpenAI
     """
-    day_of_week = current_date.strftime("%A")
-    formatted_date = current_date.strftime("%A, %B %d, %Y")
+    tomorrow = current_date + timedelta(days=1)
 
     # Process templates in user_schedule and user_context
     processed_schedule = process_template(user_schedule, timezone, completed_today)
     processed_context = process_template(user_context, timezone, completed_today)
 
+    generated = ""
+    if generated_at is not None:
+        generated = f", report generated {temporal.clock_time(generated_at)} {generated_at:%Z}".rstrip()
+
     prompt_parts = [
-        "## Current Date",
-        formatted_date,
+        "## Today",
+        f"{current_date:%A}, {current_date:%B} {current_date.day}, {current_date.year}{generated}. "
+        f"Tomorrow is {temporal.short_date(tomorrow)}.",
+        "Relative day labels in this prompt are pre-computed; rely on them instead of doing calendar math.",
         "",
     ]
 
-    if processed_schedule.strip():
+    week = (
+        temporal.map_schedule_to_dates(processed_schedule, current_date)
+        if processed_schedule.strip()
+        else []
+    )
+    if week:
+        prompt_parts.append("## Schedule This Week")
+        prompt_parts.extend(
+            f"- {temporal.day_label(day, current_date)}: {session}" for day, session in week
+        )
+        prompt_parts.append("")
+    elif processed_schedule.strip():
         prompt_parts.extend([
             "## My Typical Weekly Schedule",
             processed_schedule.strip(),
@@ -140,24 +188,14 @@ def build_analysis_prompt(
             "",
         ])
 
-    if recent_verdicts:
-        prompt_parts.extend([
-            "## Recent Daily Verdicts",
-            "One line per prior day, oldest first:",
-        ])
-        prompt_parts.extend(f"- {v}" for v in recent_verdicts)
-        prompt_parts.append("")
+    if continuity:
+        prompt_parts.extend([continuity, ""])
 
-    if yesterday_analysis:
-        if len(yesterday_analysis) > 3000:
-            yesterday_analysis = yesterday_analysis[:3000] + "\n...[truncated]"
-        prompt_parts.extend([
-            "## Yesterday's Analysis",
-            "For continuity of reasoning — do not simply repeat it:",
-            "",
-            yesterday_analysis,
-            "",
-        ])
+    notes = _data_notes(detailed_7d, current_date, generated_at)
+    if notes:
+        prompt_parts.append("## Data Notes")
+        prompt_parts.extend(f"- {note}" for note in notes)
+        prompt_parts.append("")
 
     # Deliberately short: one line per metric family. Interpretation nuance
     # (citations, methodology caveats) lives in code and docs, not in every
@@ -275,17 +313,28 @@ def build_analysis_prompt(
             prompt_parts.append(f"- **[{severity}]** {message}")
         prompt_parts.extend(["", "Factor these into your call.", ""])
 
+    reminder = (
+        f"Today is {current_date:%A} {current_date:%b} {current_date.day}; "
+        f"tomorrow is {temporal.short_date(tomorrow)}."
+    )
+    scheduled_today = next((session for day, session in week if day == current_date), None)
+    if scheduled_today:
+        reminder += f" Scheduled for today: {scheduled_today}."
+
     prompt_parts.extend([
         "## Instructions",
-        f"Today is {day_of_week}. Write a concise coaching analysis with exactly three sections:",
+        reminder,
+        "Write a concise coaching analysis with exactly three sections, titled with these markdown headings: `## 1. Today's call`, `## 2. Why`, `## 3. Week ahead`.",
         "",
-        "1. **Today's call** — First line must be `Today: <specific recommendation>` (session type, duration, intensity). Then the 2-4 numbers that drove the call. If yesterday's recommendation was followed or ignored, note it in one sentence.",
+        "1. **Today's call** — First line must be `Today: <specific recommendation>` (session type, duration, intensity). Then the 2-4 numbers that drove the call. If Continuity shows a previous plan, say in one sentence whether it was followed.",
         "2. **Why** — Brief recovery + load reasoning. Cite only decision-relevant numbers; do not tour every metric. Mention strength balance vs targets, PRs, or health alerts ONLY when the data shows something noteworthy.",
-        "3. **Week ahead** — The next 2-3 days as concrete sessions (type, duration, intensity), plus the specific morning signal that would change the plan.",
+        "3. **Week ahead** — The next 2-3 days as concrete sessions (type, duration, intensity), one bullet each labeled with weekday and date (e.g. `- **Tue Sep 15:** 40 min easy run`), then a final line starting `Morning signal that changes the plan:`.",
         "",
         "Rules:",
         "- Be decisive. When signals conflict, make one call and say what would change your mind.",
-        "- Check the recent verdicts: if you have advised easy/rest days 3+ days in a row, do NOT default to another vague easy day. Either prescribe a structured deload (concrete volumes and duration) or state the exact criteria for resuming normal training — and say plainly if illness should be considered.",
+        "- Name days by weekday and date (e.g. 'Tue Sep 15'), never 'tomorrow' or 'yesterday'. The required first line `Today: ...` is the only exception.",
+        "- Trust the current data over numbers quoted in earlier reports; values listed as revised under Continuity replace what those reports said. Treat provisional values as preliminary, and never make a red-flag call from a single provisional or unreliable reading.",
+        "- Check the recent daily calls: if 3+ consecutive days were easy or rest calls that the schedule did not already prescribe, do NOT default to another vague easy day. Either prescribe a structured deload (concrete volumes and duration) or state the exact criteria for resuming normal training — and say plainly if illness should be considered. This rule is never a reason to add training on a day the schedule marks as rest.",
         "- Skip anything the data doesn't support; no filler sections. Keep the whole analysis under ~450 words.",
     ])
 
@@ -517,6 +566,7 @@ def generate_baseline_summary(
 
 def generate_detailed_7d(
     weekly_json: dict[str, Any],
+    current_date: date | None = None,
 ) -> dict[str, Any]:
     """Generate detailed 7-day data from weekly JSON.
 
@@ -524,6 +574,9 @@ def generate_detailed_7d(
 
     Args:
         weekly_json: The full weekly report JSON
+        current_date: The report date. Its whole-day rows (resting HR,
+            training load) are flagged ``provisional`` because that day is
+            still in progress; sleep and HRV are complete once you wake.
 
     Returns:
         Detailed 7-day data with daily values
@@ -579,6 +632,13 @@ def generate_detailed_7d(
         "top_activities": activities.get("top_sessions", []),
         "anomalies": weekly_json.get("anomalies", []),
     }
+
+    if current_date is not None:
+        in_progress = current_date.isoformat()
+        for series in ("daily_rhr", "daily_training_load"):
+            for row in detailed[series]:
+                if row.get("date") == in_progress:
+                    row["provisional"] = True
 
     # Add personal records if any were set this week
     prs = weekly_json.get("personal_records", {})

@@ -100,7 +100,7 @@ class TestPromptBuilder:
         )
 
         assert "Sunday, January 25, 2026" in prompt
-        assert "Monday: Rest" in prompt
+        assert "- Mon Jan 26 (tomorrow): Rest" in prompt
         assert "Training for 5K" in prompt
         assert '"total_count": 5' in prompt
         assert '"hrv_last_night": 45' in prompt
@@ -120,28 +120,67 @@ class TestPromptBuilder:
         assert "My Typical Weekly Schedule" not in prompt
         assert "Additional Context" not in prompt
 
-    def test_build_analysis_prompt_verdicts_and_yesterday(self):
-        """Recent verdicts render one line each; yesterday's analysis is truncated."""
+    def test_build_analysis_prompt_grounds_dates(self):
+        """Today and tomorrow are named, the schedule is mapped onto real dates,
+        and the date is repeated right before the instructions."""
+        from zoneinfo import ZoneInfo
+
         prompt = build_analysis_prompt(
             baseline_30d={},
             detailed_7d={},
-            current_date=date(2026, 1, 25),
-            user_schedule="",
+            current_date=date(2026, 9, 14),
+            user_schedule="Monday: Rest day or easy recovery\nTuesday: Speed/interval workout",
             user_context="",
-            yesterday_analysis="Y" * 4000,
-            recent_verdicts=[
-                "2026-01-23 (Fri): Yellow - easy only",
-                "2026-01-24 (Sat): Green - long run",
-            ],
+            generated_at=datetime(2026, 9, 14, 8, 2, tzinfo=ZoneInfo("America/New_York")),
         )
 
-        assert "## Recent Daily Verdicts" in prompt
-        assert "- 2026-01-23 (Fri): Yellow - easy only" in prompt
-        assert "- 2026-01-24 (Sat): Green - long run" in prompt
-        assert "## Yesterday's Analysis" in prompt
-        assert "...[truncated]" in prompt
-        assert "Y" * 3000 in prompt
-        assert "Y" * 3001 not in prompt
+        assert (
+            "Monday, September 14, 2026, report generated 8:02 AM EDT. Tomorrow is Tue Sep 15."
+            in prompt
+        )
+        assert "- Mon Sep 14 (today): Rest day or easy recovery" in prompt
+        assert "- Tue Sep 15 (tomorrow): Speed/interval workout" in prompt
+        instructions = prompt[prompt.index("## Instructions"):]
+        assert (
+            "Today is Monday Sep 14; tomorrow is Tue Sep 15. "
+            "Scheduled for today: Rest day or easy recovery." in instructions
+        )
+        assert "never 'tomorrow' or 'yesterday'" in instructions
+
+    def test_build_analysis_prompt_continuity_and_data_notes(self):
+        """Continuity renders as given; provisional and missing data get notes."""
+        detailed = generate_detailed_7d(
+            {
+                "recovery": {
+                    "resting_hr": {"daily": [
+                        {"date": "2026-09-14", "value": 46, "delta": 2},
+                        {"date": "2026-09-13", "value": 47, "delta": 3},
+                    ]},
+                    "sleep": {"daily": [
+                        {"date": "2026-09-14", "hours": 6.2},
+                        {"date": "2026-09-13", "hours": None},
+                    ]},
+                },
+            },
+            current_date=date(2026, 9, 14),
+        )
+        assert detailed["daily_rhr"][0]["provisional"] is True
+        assert "provisional" not in detailed["daily_rhr"][1]
+
+        prompt = build_analysis_prompt(
+            baseline_30d={},
+            detailed_7d=detailed,
+            current_date=date(2026, 9, 14),
+            user_schedule="",
+            user_context="",
+            continuity="## Continuity\n- Sun Sep 13 (yesterday): Rest day",
+        )
+
+        assert "## Continuity\n- Sun Sep 13 (yesterday): Rest day" in prompt
+        assert "Resting HR for Mon Sep 14 (today) is provisional" in prompt
+        assert "No sleep recorded for the night ending Sun Sep 13 (yesterday)" in prompt
+        assert "night ending Mon Sep 14" not in prompt
+        assert "## Yesterday's Analysis" not in prompt
 
     def test_build_analysis_prompt_three_section_instructions(self):
         """New instruction set: three sections, decisive rules, no filler mandates."""
@@ -385,7 +424,7 @@ class TestAIIntegration:
         # Verify prompt contains all expected elements
         # Jan 25, 2026 is a Sunday
         assert "Sunday, January 25, 2026" in prompt
-        assert "Monday: Rest" in prompt
+        assert "- Mon Jan 26 (tomorrow): Rest" in prompt
         assert "Marathon training" in prompt
         assert "baseline_28d" in prompt
 
@@ -556,10 +595,9 @@ class TestChatSessionCaching:
 
     def test_cached_context_contains_all_components(self, chat_session, temp_dir, mock_repository):
         """Test that cached context contains all expected components."""
-        # Create analysis file
+        # Create today's analysis file (earlier reports contribute decisions only)
         today = date.today()
-        report_date = today - timedelta(days=1)
-        report_path = temp_dir / f"analysis-{report_date.isoformat()}.md"
+        report_path = temp_dir / f"analysis-{today.isoformat()}.md"
         report_path.write_text("Test analysis content")
 
         # Add mock activities and workouts

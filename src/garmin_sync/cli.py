@@ -1,6 +1,7 @@
 """CLI commands for garmin-sync."""
 
 import logging
+import re
 import warnings
 
 # Suppress cosmetic warning from mismatched transitive dependency versions.
@@ -936,8 +937,8 @@ def schedule_logs_cmd(
 # ==================== Analyze Commands ====================
 
 
-def _get_today_activities_summary() -> str:
-    """Get a summary of activities completed today.
+def _get_today_activities_summary(today: date) -> str:
+    """Get a summary of activities completed on `today` (a local date).
 
     Returns:
         String summary like "Morning: 3mi easy run (45 min)" or "none"
@@ -950,8 +951,8 @@ def _get_today_activities_summary() -> str:
     db.initialize()
     repo = Repository(db)
 
-    today = date.today().isoformat()
-    activities = repo.get_activities(start_date=today, end_date=today + "T23:59:59")
+    # start_time is UTC, so match on the local start time instead
+    activities = repo.get_activities_by_local_date(today.isoformat())
 
     if not activities:
         return "none"
@@ -979,35 +980,13 @@ def _get_today_activities_summary() -> str:
     return "; ".join(summaries)
 
 
-import re
-
-# Matches the daily verdict line in a saved report, e.g.
-#   "## Today: **Yellow — easy only**"  or  "Today: 40 min Z2 run"
-# (the report format mandates a `Today: <call>` line). Old reports without a
-# "Today:" line simply contribute no verdict.
-_VERDICT_RE = re.compile(
-    r"^[#>\s*\d).-]*today['’]?s?(?:\s+call)?\s*:\s*(.+)$",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-def _extract_verdict(report_text: str) -> str | None:
-    """Pull the one-line daily verdict out of a saved analysis report."""
-    match = _VERDICT_RE.search(report_text)
-    if not match:
-        return None
-    verdict = match.group(1).replace("*", "").replace("`", "").strip(" .:-—")
-    return verdict[:140] or None
-
-
 def _run_analysis() -> tuple[bool, str, str]:
     """Run AI analysis on fitness data.
 
     Returns:
         Tuple of (success, analysis_text, output_path)
     """
-    from datetime import timedelta
-
+    from garmin_sync import temporal
     from garmin_sync.ai import (
         analyze_fitness_data,
         build_analysis_prompt,
@@ -1015,6 +994,12 @@ def _run_analysis() -> tuple[bool, str, str]:
         generate_detailed_7d,
         load_config,
     )
+    from garmin_sync.ai.report_history import (
+        build_continuity_section,
+        build_snapshot,
+        save_snapshot,
+    )
+    from garmin_sync.db.repository import Repository
 
     settings = get_settings()
     settings.ensure_directories()
@@ -1028,16 +1013,20 @@ def _run_analysis() -> tuple[bool, str, str]:
     if not ai_config.enabled:
         return False, "AI analysis is disabled in configuration.", ""
 
+    # One clock for the whole report: the configured timezone, not the host's
+    now_local = temporal.now(ai_config.timezone)
+    today = now_local.date()
+
     # Get report generator and generate JSON data
     try:
         generator = _get_report_generator()
-        weekly_json = generator.generate_weekly_report(format="json")
+        weekly_json = generator.generate_weekly_report(end_date=today, format="json")
     except Exception as e:
         return False, f"Failed to generate report data: {e}", ""
 
     # Build baseline and detailed data
     baseline_30d = generate_baseline_summary(weekly_json)
-    detailed_7d = generate_detailed_7d(weekly_json)
+    detailed_7d = generate_detailed_7d(weekly_json, current_date=today)
 
     # Ensure anomalies are present for the prompt — fallback to direct
     # detection if generate_weekly_json failed silently.
@@ -1052,31 +1041,26 @@ def _run_analysis() -> tuple[bool, str, str]:
         except Exception:
             logger.debug("Anomaly fallback in _run_analysis failed", exc_info=True)
 
-    # Continuity context: one-line verdicts from the last 7 reports plus
-    # yesterday's full analysis. Feeding all 7 full reports back in made the
-    # model anchor on its own prior caution (echo-chamber effect); the verdict
-    # list keeps trend visibility at a fraction of the tokens.
-    yesterday_analysis: str | None = None
-    recent_verdicts: list[str] = []
-    today = date.today()
-    for i in range(7, 0, -1):  # Oldest first
-        report_date = today - timedelta(days=i)
-        report_path = settings.reports_dir / f"analysis-{report_date.isoformat()}.md"
-        if not report_path.exists():
-            continue
-        try:
-            text = report_path.read_text()
-        except Exception:
-            logger.debug("Could not read previous analysis %s", report_path)
-            continue
-        if i == 1:
-            yesterday_analysis = text
-        verdict = _extract_verdict(text)
-        if verdict:
-            recent_verdicts.append(f"{report_date.isoformat()} ({report_date.strftime('%a')}): {verdict}")
+    # Continuity with earlier reports is built in code, never by re-injecting
+    # their prose: recent one-line calls, activity since the last report, its
+    # plan with dates resolved, and values revised since it ran.
+    snapshot = None
+    continuity = None
+    try:
+        snapshot = build_snapshot(detailed_7d, report_date=today, generated_at=now_local)
+        repo = Repository(_get_database())
+        continuity = build_continuity_section(
+            settings.reports_dir,
+            today,
+            snapshot,
+            activities_on=lambda day: repo.get_activities_by_local_date(day.isoformat()),
+            tz_name=ai_config.timezone,
+        )
+    except Exception:
+        logger.warning("Could not build report continuity; continuing without it", exc_info=True)
 
     # Get today's completed activities for template
-    completed_today = _get_today_activities_summary()
+    completed_today = _get_today_activities_summary(today)
 
     # Get strength training data if HEVY is configured
     strength_data = None
@@ -1096,11 +1080,11 @@ def _run_analysis() -> tuple[bool, str, str]:
         current_date=today,
         user_schedule=ai_config.schedule,
         user_context=ai_config.user_context,
-        yesterday_analysis=yesterday_analysis,
-        recent_verdicts=recent_verdicts or None,
+        continuity=continuity,
         timezone=ai_config.timezone,
         completed_today=completed_today,
         strength_data=strength_data,
+        generated_at=now_local,
     )
 
     # Call OpenAI
@@ -1114,7 +1098,6 @@ def _run_analysis() -> tuple[bool, str, str]:
         return False, f"OpenAI analysis failed: {e}", ""
 
     # Format and save report
-    today = date.today()
     report_content = f"""# Fitness Analysis - {today.strftime('%A, %B %d, %Y')}
 
 {analysis}
@@ -1125,6 +1108,13 @@ def _run_analysis() -> tuple[bool, str, str]:
 
     output_path = settings.reports_dir / f"analysis-{today.isoformat()}.md"
     output_path.write_text(report_content)
+
+    # Keep the numbers this report used, so tomorrow's report can spot revisions
+    if snapshot is not None:
+        try:
+            save_snapshot(settings.reports_dir, snapshot)
+        except (OSError, TypeError, ValueError):
+            logger.warning("Could not save report snapshot", exc_info=True)
 
     return True, analysis, str(output_path)
 
@@ -1669,7 +1659,10 @@ def analyze_chat():
     console.print()
     console.print("[bold cyan]AI Fitness Coach[/bold cyan]")
     console.print("[dim]─" * 40 + "[/dim]")
-    console.print(f"  Analyses loaded: {context['analysis_count']} (last 7 days)")
+    console.print(
+        f"  Analyses loaded: {context['analysis_count']} "
+        f"(last {ChatSession.ANALYSES_CONTEXT_DAYS} days)"
+    )
     console.print(f"  Chat history: {context['chat_message_count']} messages")
     tools_status = f"[green]ON[/green] ({context['tool_count']} tools)" if context['tools_enabled'] else "[yellow]OFF[/yellow]"
     console.print(f"  Tools: {tools_status}")
