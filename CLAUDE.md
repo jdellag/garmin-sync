@@ -8,6 +8,7 @@ Python CLI that syncs Garmin Connect and HEVY fitness data to SQLite, with AI co
 src/garmin_sync/
 ├── cli.py                  # Typer CLI (33 commands across 9 groups + setup wizard; --verbose, --dry-run)
 ├── units.py                # Unit conversions (SI storage → imperial presentation; single home of constants)
+├── temporal.py             # One clock (profile timezone) + date labels/weekday math; parses both stored timestamp conventions
 ├── config/
 │   ├── paths.py            # Platform-aware path defaults (platformdirs)
 │   └── settings.py         # Pydantic Settings (env var config; data_dir + config_dir, expanduser'd)
@@ -32,10 +33,11 @@ src/garmin_sync/
 │   └── server.py           # FastMCP server with tool definitions
 ├── ai/                     # OpenAI integration
 │   ├── config.py           # TOML config (API key, model, use_tools, StrengthConfig); atomic 0o600 write
-│   ├── chat.py             # ChatSession - interactive coach with tool calling (reference data folded into system msg; ANALYSES_CONTEXT_DAYS / CHAT_HISTORY_LIMIT caps)
+│   ├── chat.py             # ChatSession - interactive coach with tool calling (reference data in system msg; session headers + per-request "now" note; ANALYSES_CONTEXT_DAYS / CHAT_HISTORY_LIMIT caps)
 │   ├── tools.py            # OpenAI function schemas for 9 tools
 │   ├── openai_client.py    # API wrapper (chat_with_tools, chat_with_history); sanitizes tool errors; per-call tool limit guard
-│   └── prompt_builder.py   # Daily + longitudinal prompts; verdict-list continuity (no echo chamber); safe_user_string for HEVY data
+│   ├── prompt_builder.py   # Daily + longitudinal prompts (dated schedule, data notes); safe_user_string for HEVY data
+│   └── report_history.py   # Report continuity: recent calls, plan vs actual, dated previous plan, snapshots + revisions
 ├── scheduler/
 │   ├── __init__.py         # get_scheduler() factory — dispatches per platform
 │   ├── launchd.py          # macOS launchd plist management
@@ -118,7 +120,7 @@ pytest tests/unit/test_mcp.py        # MCP tests
 pytest --cov=garmin_sync             # With coverage
 ```
 
-**690 tests** covering all modules.
+**733 tests** covering all modules.
 
 ## Gotchas
 
@@ -155,5 +157,6 @@ pytest --cov=garmin_sync             # With coverage
 31. **`GARMIN_SYNC_CONFIG_DIR`**: `config_dir` is a separate Settings field (default `default_config_dir()`) — `ai_config_path`/`profile_path` derive from it, so config can be relocated independently of `GARMIN_SYNC_DATA_DIR`. Path env vars are `expanduser()`'d. `paths.py` passes `appauthor=False` to platformdirs (avoids doubled `…\garmin-sync\garmin-sync` on Windows).
 32. **HRV is smoothed + personalized**: `get_hrv_context()` sets `delta_from_baseline` from the **7-day rolling mean vs the 28d baseline** (not a single night), and computes `cv_pct` (coefficient of variation of daily HRV) + `swc_pct` (≈0.5×CV, smallest worthwhile change) when ≥7 days exist. `_score_hrv` ramps from −SWC (full) to −2×CV (zero); `_check_hrv_crash` fires when the smoothed delta drops below −1×CV — both fall back to a fixed −20%/−15% when CV is unavailable (Plews & Buchheit). Mocks feeding these need `cv_pct`/`swc_pct` to exercise the personalized path.
 33. **Units policy (imperial presentation, SI storage)**: the DB stores Garmin's native SI (meters, m/s; HEVY kg) — never convert at the storage layer. Everything user/model-facing is imperial: miles, mph, min/mile pace, feet, lbs. All conversion constants and helpers live in `units.py` (no scattered `* 2.20462` / `* 3.6` literals). Raw `export activities|health` output intentionally stays SI. FIT splits are *bucketed* per-km in `activity_splits` (schema unchanged), but their displayed paces are min/mi via `sec_per_km_to_sec_per_mile`. When adding a field, name the key with its unit (`distance_miles`, `max_speed_mph`, `total_gain_ft`, `vert_ft_per_hour`).
-34. **Daily-prompt continuity contract**: `_run_analysis` (cli.py) feeds the model a one-line verdict list from the last 7 reports plus yesterday's analysis only. `_extract_verdict` matches the `Today: <call>` line (the instructions mandate it as the report's first line) — keep that output contract or verdict extraction goes blind. Never reintroduce multiple full previous analyses into the prompt: that was the echo-chamber regression that degraded coaching quality (the model anchored on a week of its own cautious headlines).
+34. **Daily-report continuity is built in code, never by re-injecting prose**: `ai/report_history.py` gives the prompt a Continuity section — recent one-line calls (`extract_verdict` matches the mandated `Today: <call>` line), activity recorded since the previous report, that report's week-ahead bullets with every day resolved to a date (`extract_plan`), and values revised since it ran. The instructions mandate `- **Tue Sep 15:**` bullet labels and a closing `Morning signal that changes the plan:` line; keep those output contracts or extraction goes blind. Revisions diff the `analysis-YYYY-MM-DD.json` snapshot saved beside each report (`analyze list`/`view` glob only `*.md`). Never feed earlier reports back in as prose: seven full reports caused the echo chamber, and yesterday's full report carried a provisional resting HR (75, later revised to 47) that the Sep 14 report mistook for recovery.
 35. **launchd report must not run before morning**: the daily job (`scheduler/launchd.py` `generate_plist`) keys the report to *today* and syncs `--days 1`, but `StartInterval` polls every 2h for catch-up. Without a floor, the **first poll after midnight (~00:36) generates today's report from a few minutes of post-midnight data** — a partial-day `body_battery_daily` row (e.g. `max_level=45` instead of the real overnight peak ~90), wrong sleep/HRV — and the idempotency guard (`if [ -f "$REPORT" ]`) then **blocks the real 08:30 run**. Fix: the command floors generation at the per-day scheduled hour (`DOW=$(date +%u)`; weekday→`weekday_hour`, weekend→`weekend_hour`; `HOUR=$((10#$(date +%H)))` forces base-10 so `08`/`09` don't trip octal parsing). Catch-up still works (a poll ≥ floor with no report yet generates it). The fix only reaches the live agent after `schedule install` rewrites the plist. Windows (`windows_task.py`) fires at exact times via `schtasks`, no poll, so it's unaffected.
+36. **Time handling: one clock, date math in code**: AI-facing code gets "now" from `temporal.now(config.timezone)`, not `date.today()`/`datetime.now()` (aggregators still use the host clock, fine while host tz matches the profile). Stored conventions differ: SQLite `CURRENT_TIMESTAMP` columns (`created_at`, `updated_at`) are **naive UTC** → `temporal.from_utc_naive`; `sync_metadata.last_sync_timestamp` is **naive local** → `temporal.from_local_naive` (subtracting it from an aware datetime was the old chat freshness crash). Prompts receive pre-computed labels (`day_label` → "Sun Sep 13 (yesterday)"), never raw calendar math. Chat replays stored messages verbatim; time reaches the model only in developer-role notes: a `Session started <absolute time>` header per session (new session after `SESSION_GAP` or a local-date change) and one per-request "now" note (current time, earlier-session offsets, freshness) inserted before the latest user message and never stored. Keep headers absolute so the replayed prefix stays cache-stable, and never stamp assistant content. `generate_detailed_7d(current_date=...)` flags the report date's whole-day rows (resting HR, training load) `provisional`; missing overnight sleep gets a Data Notes warning.

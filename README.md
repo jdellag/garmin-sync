@@ -71,7 +71,7 @@ For a complete security overview, see [SECURITY.md](SECURITY.md).
 
 ```bash
 pip install -e ".[dev]"
-pytest                           # 690 tests
+pytest                           # 733 tests
 pytest --cov=garmin_sync         # With coverage
 ruff check src/                  # Lint
 ```

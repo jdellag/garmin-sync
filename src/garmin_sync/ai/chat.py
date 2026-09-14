@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
 
+from garmin_sync import temporal
 from garmin_sync.ai.config import AIConfig
 from garmin_sync.ai.openai_client import (
     COACH_SYSTEM_MESSAGE,
@@ -14,6 +14,7 @@ from garmin_sync.ai.openai_client import (
     chat_with_tools,
 )
 from garmin_sync.ai.prompt_builder import process_template, safe_user_string
+from garmin_sync.ai.report_history import summarize_decisions
 from garmin_sync.ai.tools import TOOLS
 from garmin_sync.db.repository import Repository
 from garmin_sync.reports.aggregators import DataAggregator
@@ -25,15 +26,6 @@ from garmin_sync.units import (
     pace_sec_per_mile,
 )
 
-# East Coast timezone (handles EST/EDT automatically)
-try:
-    from zoneinfo import ZoneInfo
-    EAST_COAST_TZ = ZoneInfo("America/New_York")
-except ImportError:
-    # Python < 3.9 fallback
-    from datetime import timezone as tz
-    EAST_COAST_TZ = tz(timedelta(hours=-5))  # EST (doesn't auto-adjust for DST)
-
 
 @dataclass
 class DataFingerprint:
@@ -42,6 +34,7 @@ class DataFingerprint:
     last_sync_timestamp: str | None
     analysis_file_mtimes: dict[str, float]  # {filepath: mtime}
     hevy_workout_count: int
+    local_date: str | None = None  # relative day labels go stale at midnight
 
 
 @dataclass
@@ -62,15 +55,20 @@ class ChatSession:
     RESPONSE_RESERVE = 20_000  # Reserve for response generation
     CONTEXT_BUDGET = MAX_CONTEXT_TOKENS - RESPONSE_RESERVE
 
-    # Days of saved daily analyses preloaded into context. Deliberately small:
-    # the reports are the model's own prior output, and tools fetch anything
-    # older on demand.
+    # Days of saved daily analyses preloaded into context, counting today.
+    # Deliberately small: the reports are the model's own prior output, and
+    # tools fetch anything older on demand.
     ANALYSES_CONTEXT_DAYS = 2
 
     # Stored chat messages carried into each API call. History persists across
     # sessions in the DB; a large carryover makes weeks-old conversations
     # bleed into new ones. /clear wipes it entirely.
     CHAT_HISTORY_LIMIT = 30
+
+    # A longer gap between messages, or a change of local date, starts a new
+    # session. Sessions never span midnight, so "today" inside one has a
+    # single meaning.
+    SESSION_GAP = timedelta(hours=2)
 
     def __init__(
         self,
@@ -114,19 +112,26 @@ class ChatSession:
             self._tool_executor = ToolExecutor(self.repo, aggregator)
         return self._tool_executor
 
+    def _now(self) -> datetime:
+        """Current time in the configured timezone."""
+        return temporal.now(self.config.timezone)
+
+    def _today(self) -> date:
+        return self._now().date()
+
     def get_historical_analyses(self, days: int = 7) -> list[dict]:
-        """Load analysis reports from the last N days.
+        """Load analysis reports from the last N days, including today's.
 
         Args:
-            days: Number of days to look back
+            days: Number of days to cover, counting today
 
         Returns:
             List of dicts with 'date' and 'content' keys, oldest first
         """
         analyses = []
-        today = date.today()
+        today = self._today()
 
-        for i in range(days, 0, -1):  # Oldest first
+        for i in range(days - 1, -1, -1):  # Oldest first, ending with today
             report_date = today - timedelta(days=i)
             report_path = self.reports_dir / f"analysis-{report_date.isoformat()}.md"
 
@@ -150,13 +155,13 @@ class ChatSession:
 
         Returns:
             DataFingerprint with current sync timestamp, analysis file mtimes,
-            and HEVY workout count
+            HEVY workout count, and the local date
         """
         last_sync = self.repo.get_latest_sync_timestamp()
 
         analysis_mtimes: dict[str, float] = {}
-        today = date.today()
-        for i in range(self.ANALYSES_CONTEXT_DAYS, 0, -1):
+        today = self._today()
+        for i in range(self.ANALYSES_CONTEXT_DAYS - 1, -1, -1):
             report_date = today - timedelta(days=i)
             report_path = self.reports_dir / f"analysis-{report_date.isoformat()}.md"
             if report_path.exists():
@@ -168,6 +173,7 @@ class ChatSession:
             last_sync_timestamp=last_sync,
             analysis_file_mtimes=analysis_mtimes,
             hevy_workout_count=hevy_count,
+            local_date=today.isoformat(),
         )
 
     def _is_cache_valid(self) -> bool:
@@ -189,6 +195,7 @@ class ChatSession:
             current.last_sync_timestamp == cached.last_sync_timestamp
             and current.analysis_file_mtimes == cached.analysis_file_mtimes
             and current.hevy_workout_count == cached.hevy_workout_count
+            and current.local_date == cached.local_date
         )
 
     def _build_context_cache(self) -> CachedChatContext:
@@ -206,8 +213,9 @@ class ChatSession:
         context_sections: list[str] = []
 
         analyses = self.get_historical_analyses(days=self.ANALYSES_CONTEXT_DAYS)
-        if analyses:
-            context_sections.append(self._format_analyses_context(analyses))
+        analyses_context = self._format_analyses_context(analyses) if analyses else None
+        if analyses_context:
+            context_sections.append(analyses_context)
 
         activities_context = self._get_recent_activities_context(days=7)
         if activities_context:
@@ -233,7 +241,12 @@ class ChatSession:
         )
 
     def build_context_messages(self) -> list[dict]:
-        """Build message list using the cached system message + fresh chat history.
+        """Build the message list: cached system message, dated history, "now" note.
+
+        Stored messages are replayed verbatim. Time reaches the model only
+        through developer notes: a header at the start of each session, and
+        one note, built fresh per request and never stored, just before the
+        latest user message.
 
         Returns:
             List of message dicts ready for OpenAI API
@@ -251,19 +264,80 @@ class ChatSession:
         # OLDEST turns and keep the most recent ones (including the question the
         # user just asked), then restore chronological order for the model.
         chat_messages = self.repo.get_chat_history(limit=self.CHAT_HISTORY_LIMIT)
-        kept: list[dict] = []
+        kept = []
         for msg in reversed(chat_messages):
             msg_tokens = msg.token_estimate or len(msg.content) // 4
             if token_count + msg_tokens > self.CONTEXT_BUDGET:
                 break  # Older messages beyond budget are dropped
-            kept.append({"role": msg.role, "content": msg.content})
+            kept.append(msg)
             token_count += msg_tokens
-        messages.extend(reversed(kept))
+        kept.reverse()
 
+        messages.extend(self._render_history(kept))
         return messages
 
+    def _render_history(self, history: list) -> list[dict]:
+        """Interleave session headers into the history and add the "now" note.
+
+        Headers carry absolute times only, so the replayed prefix stays
+        byte-identical between requests (prompt caching keeps working). Every
+        relative phrase lives in the per-request note at the end.
+        """
+        rendered: list[dict] = []
+        session_starts: list[datetime] = []
+        previous: datetime | None = None
+        for msg in history:
+            # created_at comes from SQLite CURRENT_TIMESTAMP, i.e. naive UTC
+            sent = temporal.from_utc_naive(getattr(msg, "created_at", None), self.config.timezone)
+            if sent is not None:
+                new_session = (
+                    previous is None
+                    or sent - previous > self.SESSION_GAP
+                    or sent.date() != previous.date()
+                )
+                if new_session:
+                    session_starts.append(sent)
+                    rendered.append({
+                        "role": "developer",
+                        "content": f"Session started {temporal.timestamp_label(sent)}.",
+                    })
+                previous = sent
+            rendered.append({"role": msg.role, "content": msg.content})
+
+        now_note = {"role": "developer", "content": self._build_now_note(session_starts)}
+        last_user = next(
+            (i for i in range(len(rendered) - 1, -1, -1) if rendered[i]["role"] == "user"),
+            None,
+        )
+        if last_user is None:
+            rendered.append(now_note)
+        else:
+            rendered.insert(last_user, now_note)
+        return rendered
+
+    def _build_now_note(self, session_starts: list[datetime]) -> str:
+        """Current time, how long ago earlier sessions were, and data freshness."""
+        now = self._now()
+        lines = [f"Current time: {temporal.timestamp_label(now)}."]
+
+        # The last session is the one holding the question being answered.
+        earlier_days: list[str] = []
+        for start in session_starts[:-1]:
+            label = temporal.day_label(start.date(), now.date())
+            if label not in earlier_days:
+                earlier_days.append(label)
+        if earlier_days:
+            lines.append(
+                f"Earlier sessions in this conversation: {', '.join(earlier_days)}. "
+                'Words like "today" or "tomorrow" inside a session refer to that '
+                "session's own date, not to now."
+            )
+
+        lines.append(self._get_data_freshness_info(now))
+        return "\n".join(lines)
+
     def _get_today_activities_summary(self) -> str:
-        """Get a summary of activities completed today (East Coast time).
+        """Get a summary of activities completed today in the configured timezone.
 
         Uses start_time_local column to correctly identify activities
         that occurred today in the user's local timezone, avoiding
@@ -272,12 +346,7 @@ class ChatSession:
         Returns:
             String summary or "none"
         """
-        # Get today's date in East Coast timezone
-        now_local = datetime.now(EAST_COAST_TZ)
-        today_str = now_local.strftime("%Y-%m-%d")
-
-        # Query using start_time_local which stores local timestamps
-        activities = self.repo.get_activities_by_local_date(today_str)
+        activities = self.repo.get_activities_by_local_date(self._today().isoformat())
 
         if not activities:
             return "none"
@@ -305,16 +374,16 @@ class ChatSession:
         return "; ".join(summaries)
 
     def _build_system_message(self) -> str:
-        """Build the system message with coach persona and context."""
+        """Build the system message with coach persona and context.
+
+        Deliberately clock-free: the current time and data freshness go in a
+        per-request developer note (see ``_build_now_note``), so this cached
+        message never goes stale mid-session.
+        """
         # Use tools-aware system message when tools are enabled
         base_message = COACH_SYSTEM_MESSAGE_WITH_TOOLS if self._use_tools else COACH_SYSTEM_MESSAGE
         parts = [base_message]
-
-        # Add current date so the model doesn't have to guess
-        now_local = datetime.now(EAST_COAST_TZ)
-        parts.append(
-            f"\n\nCurrent date: {now_local.strftime('%A, %B %d, %Y')}."
-        )
+        today = self._today()
 
         # Get today's activities for template substitution
         completed_today = self._get_today_activities_summary()
@@ -332,19 +401,29 @@ class ChatSession:
         )
 
         if processed_schedule.strip():
-            parts.append(
-                f"\n\nUser's typical training schedule:\n{processed_schedule}"
-            )
+            week = temporal.map_schedule_to_dates(processed_schedule, today)
+            if week:
+                lines = "\n".join(
+                    f"- {temporal.day_label(day, today)}: {session}" for day, session in week
+                )
+                parts.append(f"\n\nUser's training schedule this week:\n{lines}")
+            else:
+                parts.append(
+                    f"\n\nUser's typical training schedule:\n{processed_schedule}"
+                )
 
         if processed_context.strip():
             parts.append(
                 f"\n\nAdditional context about the user:\n{processed_context}"
             )
 
-        # Add data freshness indicator
-        freshness_info = self._get_data_freshness_info()
-        if freshness_info:
-            parts.append(f"\n\n{freshness_info}")
+        parts.append(
+            "\n\nTime context: the replayed conversation includes a developer "
+            "note at the start of each session giving its date and time, and a "
+            "note with the current time comes right before the user's latest "
+            "message. Use those notes to place earlier messages in time; never "
+            "assume an earlier session happened today."
+        )
 
         parts.append(
             "\n\nYou have access to the user's historical fitness analyses. "
@@ -354,63 +433,68 @@ class ChatSession:
 
         return "".join(parts)
 
-    def _get_data_freshness_info(self) -> str:
-        """Get information about data freshness for the AI context.
+    def _get_data_freshness_info(self, now: datetime | None = None) -> str:
+        """Describe when data was last synced, relative to now.
 
-        Returns:
-            String describing when data was last synced, or empty string
+        ``sync_metadata`` stores naive local wall-clock timestamps.
         """
-        last_sync = self.repo.get_latest_sync_timestamp()
-        if not last_sync:
-            return "⚠️ DATA FRESHNESS: No sync data available. Data may be stale."
+        now = now or self._now()
+        last_sync = temporal.from_local_naive(
+            self.repo.get_latest_sync_timestamp(), self.config.timezone
+        )
+        if last_sync is None:
+            return "⚠️ Data freshness: no successful sync found. Data may be stale."
 
-        try:
-            # Parse the sync timestamp
-            sync_dt = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
+        relative = temporal.relative_day(last_sync.date(), now.date())
+        day = relative if relative in ("today", "yesterday") else temporal.short_date(last_sync.date())
+        line = (
+            f"Data last synced {day} at {temporal.clock_time(last_sync)} "
+            f"({temporal.age_phrase(last_sync, now)})."
+        )
+        if now - last_sync > timedelta(hours=24):
+            return (
+                f"⚠️ {line} Data may be stale; recommend the user runs "
+                "'garmin-sync sync all' before giving detailed advice."
+            )
+        return line
 
-            # Calculate age
-            age = now - sync_dt
-            hours_old = age.total_seconds() / 3600
+    def _format_analyses_context(self, analyses: list[dict]) -> str | None:
+        """Format recent daily analyses as a context section.
 
-            # Format for display in local time
-            sync_local = sync_dt.astimezone(EAST_COAST_TZ)
-            sync_str = sync_local.strftime("%Y-%m-%d %I:%M %p %Z")
-
-            if hours_old < 2:
-                return f"Data freshness: Last sync {sync_str} (current)"
-            elif hours_old < 24:
-                return f"Data freshness: Last sync {sync_str} ({hours_old:.0f} hours ago)"
-            else:
-                days_old = hours_old / 24
-                return (
-                    f"⚠️ DATA FRESHNESS WARNING: Last sync was {sync_str} "
-                    f"({days_old:.1f} days ago). Data may be stale - "
-                    "recommend user runs 'garmin-sync sync all' before giving detailed advice."
-                )
-        except (ValueError, TypeError):
-            return "⚠️ DATA FRESHNESS: Unable to determine last sync time."
-
-    def _format_analyses_context(self, analyses: list[dict]) -> str:
-        """Format historical analyses as context message.
+        Today's report is included in full. Earlier reports contribute only
+        their decisions (the daily call and the plan, every day resolved to a
+        date): numbers quoted in them may have been revised since, and
+        replaying their prose made the coach repeat stale readings.
 
         Args:
             analyses: List of analysis dicts with 'date' and 'content'
 
         Returns:
-            Formatted string for context
+            Formatted string for context, or None if nothing usable remains
         """
-        parts = ["## Recent Daily Analyses\n"]
+        today = self._today()
+        header = [
+            "## Recent Daily Analyses",
+            "Numbers quoted in an analysis reflect the data when it was written and may "
+            "have been revised since; check current values with tools before relying on them.",
+        ]
+        parts: list[str] = []
 
         for analysis in analyses:
-            parts.append(f"\n### Analysis from {analysis['date']}\n")
-            # Truncate long analyses to save tokens
-            content = analysis["content"]
-            if len(content) > 3000:
-                content = content[:3000] + "\n...[truncated]"
-            parts.append(content)
+            written = date.fromisoformat(analysis["date"])
+            label = temporal.day_label(written, today)
+            if written == today:
+                # Truncate long analyses to save tokens
+                content = analysis["content"]
+                if len(content) > 3000:
+                    content = content[:3000] + "\n...[truncated]"
+                parts.append(f"\n### Analysis written {label}\n{content}")
+            else:
+                decisions = summarize_decisions(analysis["content"], written, today)
+                if decisions:
+                    parts.append(f"\n### Decisions from the analysis written {label}\n{decisions}")
 
-        return "".join(parts)
+        return "\n".join(header + parts) if parts else None
 
     def _get_recent_activities_context(self, days: int = 7) -> str | None:
         """Get recent Garmin activities for chat context.
@@ -424,9 +508,8 @@ class ChatSession:
         Returns:
             Formatted string with activity details, or None if no data
         """
-        from datetime import timedelta
-
-        start_date = (date.today() - timedelta(days=days)).isoformat()
+        today = self._today()
+        start_date = (today - timedelta(days=days)).isoformat()
         activities = self.repo.get_activities(start_date=start_date, limit=50)
 
         if not activities:
@@ -435,11 +518,13 @@ class ChatSession:
         parts = ["## Recent Garmin Activities (Last 7 Days)\n"]
 
         for act in activities:
-            # Parse date and time from local time (not UTC)
-            local_time = act.start_time_local or act.start_time
-            act_date = local_time[:10] if local_time else "N/A"
-            # Extract time (HH:MM) for context
-            act_time = local_time[11:16] if local_time and len(local_time) > 15 else None
+            # Local start time (not UTC), labelled relative to today
+            started = temporal.parse_iso(act.start_time_local or act.start_time)
+            when = (
+                f"{temporal.day_label(started.date(), today)} @ {temporal.clock_time(started)}"
+                if started
+                else "N/A"
+            )
             name = act.activity_name or act.activity_type or "Activity"
 
             # Format duration
@@ -519,13 +604,11 @@ class ChatSession:
             primary = ", ".join(filter(None, [duration_str, distance_str, pace_str, best_str, hr_str]))
             secondary = ", ".join(filter(None, [te_str, load_str, drift_str, elev_str, cadence_str, cal_str]))
 
-            # Include time of day for context
-            time_str = f" @ {act_time}" if act_time else ""
             if secondary:
-                parts.append(f"- **{act_date}{time_str}**: {name} ({primary})")
+                parts.append(f"- **{when}**: {name} ({primary})")
                 parts.append(f"  [{secondary}]")
             else:
-                parts.append(f"- **{act_date}{time_str}**: {name} ({primary})")
+                parts.append(f"- **{when}**: {name} ({primary})")
 
         return "\n".join(parts)
 
@@ -546,11 +629,21 @@ class ChatSession:
         if not workouts:
             return None
 
+        today = self._today()
         parts = ["## Recent Strength Training (Last 7 Days)\n"]
 
         for w in workouts:
-            date_str = w.get("date", "N/A")
+            when = w.get("date") or "N/A"
+            try:
+                when = temporal.day_label(date.fromisoformat(when), today)
+            except ValueError:
+                pass
             time_str = w.get("time")
+            if time_str:
+                try:
+                    time_str = temporal.clock_time(datetime.strptime(time_str, "%H:%M"))
+                except ValueError:
+                    pass
             time_display = f" @ {time_str}" if time_str else ""
             title = safe_user_string(w.get("title", "Workout"))
             volume = w.get("total_volume_lbs", 0)
@@ -558,7 +651,7 @@ class ChatSession:
             duration_str = f", {duration} min" if duration else ""
 
             parts.append(
-                f"\n### {date_str}{time_display}: <hevy_title>{title}</hevy_title> "
+                f"\n### {when}{time_display}: <hevy_title>{title}</hevy_title> "
                 f"({volume:,} lbs{duration_str})"
             )
 
@@ -631,7 +724,7 @@ class ChatSession:
         hevy_workouts = self.repo.get_hevy_workout_details(days=7)
 
         # Get Garmin activity count
-        start_date = (date.today() - timedelta(days=7)).isoformat()
+        start_date = (self._today() - timedelta(days=7)).isoformat()
         garmin_activities = self.repo.get_activities(start_date=start_date, limit=50)
 
         # Calculate cache age if cache exists
