@@ -142,14 +142,8 @@ class LLMReportFormatter:
                 training_readiness=training_readiness,
             ))
 
-            # Decision Context section
-            sections.append(self._format_decision_context(
-                hrv_context=hrv_context,
-                sleep_consistency=sleep_consistency,
-                training_load=training_load,
-                rhr_trend=rhr_trend,
-                training_readiness=training_readiness,
-            ))
+            # Alerts come from the anomaly detector, the single alert layer
+            sections.append(self._format_alerts_section(end_date))
         else:
             # Compact health metrics for non-LLM mode
             sections.append(self._format_health_section(health, llm_mode=False))
@@ -687,97 +681,22 @@ class LLMReportFormatter:
 
         return "\n".join(lines)
 
-    def _format_decision_context(
-        self,
-        hrv_context: Optional[dict],
-        sleep_consistency: Optional[dict],
-        training_load: Optional[dict],
-        rhr_trend: Optional[dict],
-        training_readiness: Optional[dict],
-    ) -> str:
-        """Format Decision Context section with key observations."""
-        lines = ["## Decision Context"]
-        lines.append("Key observations for training decisions:")
-        observations = []
+    def _format_alerts_section(self, end_date: date) -> str:
+        """Health and training alerts from the anomaly detector (the only alert layer)."""
+        from garmin_sync.reports.anomaly_detector import AnomalyDetector
 
-        # HRV observations
-        if hrv_context and hrv_context.get("baseline_7d"):
-            days_below = hrv_context.get("days_below_baseline", 0)
-            delta = hrv_context.get("delta_from_baseline")
-            status = hrv_context.get("status")
+        lines = ["## Health & Training Alerts"]
+        try:
+            anomalies = AnomalyDetector(self.aggregator.db).detect_anomalies(end_date)
+        except Exception:
+            logger.warning("Anomaly detection failed in weekly report", exc_info=True)
+            lines.append("- Anomaly detection unavailable.")
+            return "\n".join(lines)
 
-            if days_below >= 3:
-                observations.append(f"- **HRV Alert:** {days_below} consecutive days below baseline - consider recovery focus")
-            elif days_below > 0 and delta and delta < -10:
-                observations.append(f"- **HRV Below Baseline:** {delta:+.0f}% from baseline ({days_below} days) - monitor")
-            elif status == "UNBALANCED" or status == "LOW":
-                observations.append(f"- **HRV Status:** {status} - recovery may be compromised")
-            elif delta and delta > 5:
-                observations.append(f"- **HRV Elevated:** {delta:+.0f}% above baseline - good recovery sign")
-            else:
-                observations.append("- **HRV:** Within normal range")
-
-        # Sleep observations
-        if sleep_consistency:
-            variance = sleep_consistency.get("sleep_time_variance_mins")
-            awake = sleep_consistency.get("avg_awake_mins")
-
-            if variance and variance > 60:
-                observations.append(f"- **Sleep Inconsistency:** ±{variance:.0f}min bedtime variance - affects recovery")
-            elif variance and variance < 30:
-                observations.append(f"- **Sleep Consistency:** Good (±{variance:.0f}min variance)")
-
-            if awake and awake > 40:
-                observations.append(f"- **Sleep Quality:** High wake time ({awake:.0f}min avg) - may indicate stress")
-
-        # Training load observations
-        if training_load:
-            ratio = training_load.get("acute_chronic_ratio")
-            change = training_load.get("week_change_pct")
-
-            if ratio:
-                if ratio > 1.5:
-                    observations.append(f"- **Load Alert:** A:C ratio {ratio:.2f} - high injury risk, reduce intensity")
-                elif ratio > 1.3:
-                    observations.append(f"- **Load Elevated:** A:C ratio {ratio:.2f} - approaching threshold, monitor closely")
-                elif ratio < 0.8:
-                    observations.append(f"- **Load Low:** A:C ratio {ratio:.2f} - detraining risk, can increase load")
-                else:
-                    observations.append(f"- **Load Optimal:** A:C ratio {ratio:.2f} - within safe range (0.8-1.3)")
-
-            if change and abs(change) > 20:
-                direction = "increase" if change > 0 else "decrease"
-                observations.append(f"- **Load Change:** {change:+.0f}% week-over-week {direction}")
-
-        # RHR observations
-        if rhr_trend:
-            delta = rhr_trend.get("delta")
-            trend = rhr_trend.get("trend")
-
-            if delta and delta > 5:
-                observations.append(f"- **RHR Elevated:** +{delta} bpm from baseline - possible fatigue/illness")
-            elif trend == "rising" and delta and delta > 2:
-                observations.append(f"- **RHR Rising:** {trend} trend (+{delta} from baseline)")
-            elif trend == "falling":
-                observations.append(f"- **RHR Improving:** {trend} trend - good adaptation sign")
-
-        # Training readiness
-        if training_readiness and training_readiness.get("score"):
-            score = training_readiness["score"]
-            level = training_readiness.get("level", "")
-
-            if score < 50:
-                observations.append(f"- **Readiness Low:** {score}/100 ({level}) - prioritize recovery")
-            elif score >= 75:
-                observations.append(f"- **Readiness Good:** {score}/100 ({level}) - ready for harder training")
-            else:
-                observations.append(f"- **Readiness Moderate:** {score}/100 ({level})")
-
-        if observations:
-            lines.extend(observations)
+        if anomalies:
+            lines.extend(f"- **[{a['severity'].upper()}]** {a['message']}" for a in anomalies)
         else:
-            lines.append("- Insufficient data to generate decision context. Sync more data with `--detailed` flag.")
-
+            lines.append("- No health or training anomalies detected.")
         return "\n".join(lines)
 
     def generate_weekly_json(self, end_date: Optional[date] = None) -> dict[str, Any]:

@@ -1100,8 +1100,8 @@ class TestLLMFormatterEnhanced:
         assert "Acute" in report
         assert "Chronic" in report or "chronic" in report.lower()
 
-    def test_llm_report_contains_decision_context(self, db_with_comprehensive_data):
-        """LLM report includes Decision Context section."""
+    def test_llm_report_contains_alerts_section(self, db_with_comprehensive_data):
+        """LLM report includes anomaly-detector alerts, not a second alert layer."""
         aggregator = DataAggregator(db_with_comprehensive_data)
         formatter = LLMReportFormatter(aggregator)
 
@@ -1110,8 +1110,9 @@ class TestLLMFormatterEnhanced:
             llm_mode=True,
         )
 
-        assert "## Decision Context" in report
-        assert "training decisions" in report.lower()
+        assert "## Health & Training Alerts" in report
+        assert "## Decision Context" not in report
+        assert "injury risk" not in report
 
     def test_llm_report_contains_training_readiness(self, db_with_comprehensive_data):
         """LLM report includes Training Readiness section."""
@@ -1155,7 +1156,7 @@ class TestLLMFormatterEnhanced:
 
         # Should not have detailed analysis sections
         assert "## Recovery & Readiness Analysis" not in report
-        assert "## Decision Context" not in report
+        assert "## Health & Training Alerts" not in report
         # Should have basic health metrics
         assert "## Health Metrics" in report
 
